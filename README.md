@@ -11,7 +11,7 @@ It runs in the browser at the Worker's address. Everyone on the team signs in wi
 ## Deploy it (once, by whoever looks after Cloudflare)
 
 1. Connect this repository in the Cloudflare dashboard: **Workers & Pages → Create → Import a repository**. Keep the default deploy command (`npx wrangler deploy`). Every push to `main` deploys.
-2. The first deploy creates the D1 database `invoice-agent` and the R2 bucket `invoice-agent-files` named in `wrangler.jsonc`. R2 has to be enabled on the account once (R2 in the dashboard, accept the terms). If the build reports that it cannot create them, run `npx wrangler d1 create invoice-agent` and `npx wrangler r2 bucket create invoice-agent-files`, put the printed `database_id` into `wrangler.jsonc`, and push again.
+2. The first deploy creates the D1 database `invoice-agent` and an R2 bucket called `agent-invoice-data-extraction-files` (wrangler names the bucket after the Worker; a bucket named in the config would have to exist already). R2 has to be enabled on the account once: open R2 in the dashboard and accept the terms, then re-run the build if it failed on that. If the build still cannot create them, run `npx wrangler d1 create invoice-agent` and `npx wrangler r2 bucket create agent-invoice-data-extraction-files`, put the printed `database_id` and the `bucket_name` into `wrangler.jsonc`, and push again.
 3. Open the Worker → **Settings → Variables and Secrets** and add a **secret** named `APP_PASSWORD`. Until it exists the app refuses every visitor and says so.
 4. Open the Worker's address and sign in.
 
@@ -118,6 +118,6 @@ wrangler.jsonc        Worker, D1, R2, assets and cron configuration
 
 - The Intacct field names follow the documented `APBILL` create object (`WHENCREATED`, `WHENDUE`, `VENDORID`, `RECORDID`, `DOCNUMBER`, `TERMNAME`, `TAXSOLUTIONID`, `APBILLITEMS/APBILLITEM` with `ACCOUNTNO`, `TRX_AMOUNT`, `LOCATIONID`, `DEPARTMENTID`, `PROJECTID`, `TAXENTRIES`). Credit notes map to `APADJUSTMENT` with negative amounts. The PO number goes in `DOCNUMBER` (reference); change `build` in `src/sage_mapper.js` if your Intacct uses PO matching through Purchasing instead.
 - The Intacct push has been written against the XML gateway spec but not exercised against a live company - do the first post as *Draft* and compare against a bill keyed by hand.
-- Attachments live in the R2 bucket and extracted data in the D1 database, both inside your Cloudflare account. Delete a row from the Inbox to remove both; the email keeps its labels.
+- Attachments live in the R2 bucket (`agent-invoice-data-extraction-files`) and extracted data in the D1 database (`invoice-agent`), both inside your Cloudflare account. Delete a row from the Inbox to remove both; the email keeps its labels.
 - Only PDF, PNG, JPG and WEBP attachments are read; images under 20 KB are treated as logos and skipped.
 - The cron trigger fires every five minutes; the automatic-check interval on the extraction tab decides whether a run is due, so anything under five minutes behaves as five.
