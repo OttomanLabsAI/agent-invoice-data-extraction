@@ -161,6 +161,13 @@ async function run() {
   page = await req("/agents/extraction/run", { method: "POST" });
   check(page.text.includes("Checked 0 email(s)"), "processed mail is not read twice");
 
+  // ---- Agent tree
+  page = await req("/agents");
+  check(page.status === 200 && page.text.includes("<h1>Agent tree</h1>") && page.text.includes('href="/agents" class="active">Agent tree</a>'), "agent tree tab renders");
+  check(page.text.includes('class="node agent" href="/agents/classification"') && page.text.includes('class="node agent" href="/agents/extraction"'), "agent boxes link to the agent tabs");
+  check(page.text.includes("3 emails classified: 1 invoice, 2 not") && page.text.includes("1 document read, 0 failed") && page.text.includes("2 emails so far"), "tree boxes show live counts");
+  check(page.text.includes("labels “Invoice Incoming”") && page.text.includes("labels “Not an invoice”") && page.text.includes("Connected as invoices@glent.example"), "tree edges carry the labels and the mailbox status");
+
   // ---- Inbox and the combined check
   page = await req("/");
   check(page.text.includes("Northbank Mechanical Services Ltd") && page.text.includes("NMS-2026-0417") && page.text.includes("Needs review"), "inbox lists the extracted invoice");

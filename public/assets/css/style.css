@@ -38,15 +38,16 @@ pre { margin: 0; white-space: pre; overflow: auto; }
 
 /* ---------- Frame */
 .topbar {
-  display: flex; align-items: baseline; justify-content: space-between;
+  display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.3rem 1.6rem;
   padding: 1rem 2rem 0.8rem;
   border-bottom: 1px solid var(--rule-strong);
   background: var(--sheet);
 }
-.wordmark { font-weight: 600; font-size: 1.05rem; text-decoration: none; }
+.wordmark { font-weight: 600; font-size: 1.05rem; text-decoration: none; white-space: nowrap; }
 .wordmark span { color: var(--ink-soft); font-weight: 400; }
+.topbar nav { display: flex; flex-wrap: wrap; gap: 0 1.6rem; }
 .topbar nav a {
-  text-decoration: none; margin-left: 1.6rem; padding-bottom: 0.55rem; color: var(--ink-soft);
+  text-decoration: none; padding-bottom: 0.55rem; color: var(--ink-soft); white-space: nowrap;
   border-bottom: 2px solid transparent;
 }
 .topbar nav a.active, .topbar nav a:hover { color: var(--ink); border-bottom-color: var(--margin); }
@@ -230,7 +231,43 @@ img.preview { object-fit: contain; height: auto; max-height: 560px; }
 
 /* ---------- Sign-out sits in the tab row */
 .topbar nav button.linklike {
-  font: inherit; border: 0; background: none; cursor: pointer; margin-left: 1.6rem; padding: 0 0 0.55rem;
+  font: inherit; border: 0; background: none; cursor: pointer; padding: 0 0 0.55rem;
   color: var(--ink-soft); border-bottom: 2px solid transparent;
 }
 .topbar nav button.linklike:hover { color: var(--ink); border-bottom-color: var(--margin); }
+
+/* ---------- Agent tree */
+.tree { overflow-x: auto; padding: 0.4rem 0 1rem; }
+.tree ul { list-style: none; margin: 0; padding: 1.8rem 0 0; display: flex; justify-content: center; align-items: flex-start; gap: 1.6rem; position: relative; }
+.tree > ul { padding-top: 0; }
+.tree li { position: relative; display: flex; flex-direction: column; align-items: center; padding-top: 2.4rem; flex: 0 1 auto; }
+.tree > ul > li { padding-top: 0; }
+.tree li::before { content: ""; position: absolute; top: 0; left: 50%; width: 2px; height: 2.4rem; background: var(--rule-strong); }
+.tree li::after { content: ""; position: absolute; top: -2px; left: 0; right: 0; height: 2px; background: var(--rule-strong); }
+.tree li:first-child::after { left: 50%; }
+.tree li:last-child::after { right: 50%; }
+.tree li:only-child::after, .tree > ul > li::before, .tree > ul > li::after { display: none; }
+.tree ul::before { content: ""; position: absolute; top: 0; left: 50%; width: 2px; height: 1.8rem; background: var(--rule-strong); }
+.tree > ul::before { display: none; }
+.tree .edge {
+  position: absolute; top: 0.5rem; left: 50%; transform: translateX(-50%); white-space: nowrap;
+  font-size: 0.78rem; color: var(--ink-soft); background: var(--paper); padding: 0 0.4rem; max-width: 22rem; overflow: hidden; text-overflow: ellipsis;
+}
+.tree .node {
+  display: block; width: 19rem; max-width: 100%; background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: 3px;
+  padding: 0.75rem 0.95rem; text-decoration: none; color: var(--ink);
+}
+.tree .node:hover, .tree .node:focus-visible { border-color: var(--ink); box-shadow: 0 1px 0 var(--rule-strong); }
+.tree .node.agent { border-left: 3px solid var(--margin); }
+.tree .node.leaf { border-style: dashed; color: var(--ink-soft); }
+.tree .node .name { display: block; font-weight: 600; }
+.tree .node .meta { display: block; color: var(--ink-soft); font-size: 0.85rem; margin-top: 0.2rem; }
+.tree .node .stat { display: block; font-family: var(--mono); font-size: 0.78rem; color: var(--ink); margin-top: 0.45rem; }
+@media (prefers-reduced-motion: no-preference) { .tree .node { transition: border-color 120ms ease, box-shadow 120ms ease; } }
+@media (max-width: 760px) {
+  .tree ul { flex-direction: column; align-items: stretch; gap: 0; }
+  .tree li { align-items: stretch; }
+  .tree li::after { display: none; }
+  .tree .edge { left: 0; transform: none; max-width: 100%; }
+  .tree .node { width: auto; }
+}

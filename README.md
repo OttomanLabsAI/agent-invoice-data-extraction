@@ -52,6 +52,8 @@ Anything that cannot be mapped is listed as a check on the invoice and blocks *A
 
 **Agent - Invoice Extraction** reads every email labelled `Invoice Incoming` that has not been processed, sends each PDF or image to Claude with the invoice record schema, maps the result to a Sage Intacct bill and files it in the Inbox for review. Its tab holds the model (Opus 5 by default), the reference text, the processed label (`Invoices/Processed`, added with the email marked read once its attachments are in), the automatic-check interval, and the full list of fields it extracts.
 
+**Agent tree** is the map of all this: mailbox → classification → its two labels → extraction → Inbox → Sage, drawn as a tree with each box showing its model, last run and counts. Click a box to open it.
+
 **Reference text (RAG)** - each agent has a free-text box for what it should know: supplier names and how they word things, which references are project codes, CIS and retention conventions, senders whose mail is never an invoice, examples it has got wrong. Text under about 16,000 characters is sent whole with every call; longer text is split into paragraphs and only the ones that share words with the email are retrieved and sent.
 
 Both agents work in small batches per click (five emails classified, one email extracted) and the page keeps going by itself while more mail is waiting; *Stop* on the page halts it. With **Automatic checks** set to a number of minutes, a cron trigger runs both agents on that cadence without anyone clicking.

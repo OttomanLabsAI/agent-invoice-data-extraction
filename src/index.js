@@ -21,6 +21,7 @@ const ROUTES = [
   ["GET", "/invoice/:id/sage.json", routes.invoiceSageJson],
   ["GET", "/invoice/:id/sage.xml", routes.invoiceSageXml],
   ["GET", "/export.csv", routes.exportCsv],
+  ["GET", "/agents", routes.agentTree],
   ["GET", "/agents/classification", routes.classificationTab],
   ["POST", "/agents/classification", routes.classificationSave],
   ["POST", "/agents/classification/run", routes.classificationRun],

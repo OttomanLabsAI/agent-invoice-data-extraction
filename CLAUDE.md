@@ -19,7 +19,7 @@ npm run check                    # wrangler deploy --dry-run
 
 ```
 src/index.js          fetch + scheduled entry, router, sign-in gate, security headers
-src/routes.js         handlers only; no business logic
+src/routes.js         handlers only; no business logic (GET /agents is the tree, /agents/<name> the agent tabs)
 src/pipeline.js       processAttachment, remap, classifyStep, extractStep, checkInboxStep, runScheduled
 src/claude.js         Messages API via fetch: extractInvoice, classifyEmail, checkApiKey; base64 media blocks
 src/gmail.js          OAuth (web client), token refresh, REST client: list/fetch/attachments/labels/modify
@@ -33,8 +33,8 @@ src/db.js             D1 schema (settings, state, invoices, runs, classification
 src/auth.js           APP_PASSWORD check, HMAC session cookie, same-origin check for posts
 src/fixtures.js       fake mailbox + fake Claude, only when env.TEST_FIXTURES === "1"
 src/views/html.js     html`` tag that escapes interpolations; raw(); money/shortDate filters
-src/views/layout.js   page frame with the four tabs; ASSET_VERSION; continueNudge
-src/views/pages.js    sign-in, setup, inbox, invoice review, both agent tabs, settings, 404
+src/views/layout.js   page frame with the five tabs (Inbox, Agent tree, the two agents, Settings); ASSET_VERSION; continueNudge
+src/views/pages.js    sign-in, setup, inbox, invoice review, agent tree, both agent tabs, settings, 404
 public/               static assets: assets/css/style.css, assets/js/app.js, favicon.svg, robots.txt (Disallow), _headers
 tests/unit.test.js    mapper, normalise, rag, csv, settings, helpers
 tests/smoke.js        end-to-end over HTTP against wrangler dev (fixture mode)
@@ -91,7 +91,7 @@ Settings defaults are placeholders (`LON`/`MEP`, vendor map empty). Real IDs com
 - Every push to `main` is a release. Versions are an ascending `vMAJOR.MINOR` sequence; minor bump per push, major reserved for a ground-up overhaul.
 - Commits: descriptive imperative first line, short prose body. No AI-attribution trailers, model names, session links or tooling identifiers in commits, titles or code comments. (The model IDs in `settings.js` are application configuration and stay.)
 - Never push tags. Put the release text (Tag / Title / Description) in the reply so the GitHub release can be created by hand, and append a line to the ledger below.
-- Before every push: `npm test` and `npm run smoke` green, `npm run check` clean, start `npm run dev` and click through sign-in -> Inbox -> sample upload -> review -> both agent tabs -> Settings, and confirm `git status` shows no `.dev.vars` or `.wrangler/`.
+- Before every push: `npm test` and `npm run smoke` green, `npm run check` clean, start `npm run dev` and click through sign-in -> Inbox -> sample upload -> review -> Agent tree -> both agent tabs -> Settings, and confirm `git status` shows no `.dev.vars` or `.wrangler/`.
 
 ### Release ledger
 
@@ -100,3 +100,4 @@ Settings defaults are placeholders (`LON`/`MEP`, vendor map empty). Real IDs com
 | v1.0 | 14 Sep 2026 | First release: the local Python app as handed over, plus a project website served from public/ on Cloudflare Workers. Smoke test passes on Python 3.11. |
 | v2.0 | 14 Sep 2026 | Ground-up rebuild as a Cloudflare Worker that runs in the browser: D1 + R2 storage, app-password sign-in, and two agent tabs - Classification labels invoices in the mailbox, Invoice Extraction reads them - each with its own model and reference text. |
 | v2.1 | 14 Sep 2026 | Claude Opus 5 is the default model for both agents. |
+| v2.2 | 14 Sep 2026 | Agent tree tab: a clickable map of the mailbox, the two agents, the Inbox and Sage, with each box showing its model, last run and counts. |

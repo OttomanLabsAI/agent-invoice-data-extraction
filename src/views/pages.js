@@ -1,6 +1,7 @@
 import { html, raw, when, selected, checked, disabled, money, shortDate, timeOf, fmt2, plain, humanise, esc } from "./html.js";
 import { continueNudge } from "./layout.js";
 import { STATUSES, STATUS_LABELS } from "../db.js";
+import { modelLabel } from "../settings.js";
 
 // --------------------------------------------------------------------------- Sign-in and setup
 
@@ -373,7 +374,7 @@ export function classificationPage({ s, models, connected, claudeReady, recent, 
 <div class="actions"><button class="btn primary" type="submit">Save</button></div>
 </form>
 
-<section class="sheet">
+<section class="sheet" id="decisions">
   <h2>Recent decisions</h2>
   <p class="help">${counts.total ? html`${counts.total} email${counts.total === 1 ? "" : "s"} classified so far: ${counts.invoice} invoice${counts.invoice === 1 ? "" : "s"}, ${counts.not_invoice} not.` : "Nothing classified yet."}</p>
   ${recent.length
@@ -476,6 +477,101 @@ export function extractionPage({ s, models, connected, claudeReady, lastRun, rag
 </section>`;
 }
 
+// --------------------------------------------------------------------------- Agent tree
+
+function runLine(run) {
+  if (!run) return "Not run yet";
+  return `Last run ${shortDate(run.finished_at || run.started_at)}${run.finished_at ? ` ${timeOf(run.finished_at)} UTC` : ""}`;
+}
+
+function node({ href, kind = "", name, lines = [], stat = "" }) {
+  return html`<a class="node ${kind}" href="${href}">
+    <span class="name">${name}</span>
+    ${lines.filter(Boolean).map((line) => html`<span class="meta">${line}</span>`)}
+    ${when(stat, html`<span class="stat">${stat}</span>`)}
+  </a>`;
+}
+
+export function agentTreePage({ s, gmail, claudeReady, sageReady, classifyRun, extractRun, classCounts, invoiceCounts }) {
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const mailbox = node({
+    href: "/settings#gmail",
+    name: "Gmail mailbox",
+    lines: [
+      gmail.connected ? `Connected as ${gmail.email}` : gmail.error ? `Token problem - reconnect in Settings` : "Not connected - open Settings",
+      claudeReady ? "Claude key in place" : "No Claude API key yet",
+    ],
+    stat: `search: ${s.gmail_query || "has:attachment is:unread"}`,
+  });
+  const classification = node({
+    href: "/agents/classification",
+    kind: "agent",
+    name: "Agent - Classification",
+    lines: [modelLabel(s.classify_model), runLine(classifyRun)],
+    stat: classCounts.total ? `${plural(classCounts.total, "email")} classified: ${plural(classCounts.invoice, "invoice")}, ${classCounts.not_invoice} not` : "Nothing classified yet",
+  });
+  const extraction = node({
+    href: "/agents/extraction",
+    kind: "agent",
+    name: "Agent - Invoice Extraction",
+    lines: [modelLabel(s.extract_model), runLine(extractRun)],
+    stat: invoiceCounts.total ? `${plural(invoiceCounts.total, "document")} read, ${invoiceCounts.error} failed` : "Nothing extracted yet",
+  });
+  const inbox = node({
+    href: "/",
+    name: "Inbox - review",
+    lines: ["Check the fields and the Key into Sage sheet, then approve"],
+    stat: `${invoiceCounts.review} needing review · ${invoiceCounts.approved} approved · ${invoiceCounts.queried} queried`,
+  });
+  const sageNode = node({
+    href: "/settings#sage",
+    name: "Sage Intacct",
+    lines: [sageReady ? "Connected - approved bills can be posted as Draft" : "Not connected - key in from the entry sheet, or download JSON / XML / CSV"],
+    stat: `${plural(invoiceCounts.posted, "bill")} posted or keyed in`,
+  });
+  const stopped = node({
+    href: "/agents/classification#decisions",
+    kind: "leaf",
+    name: "Stops here",
+    lines: ["Statements, remittances, quotes and the rest stay in the mailbox with this label"],
+    stat: `${plural(classCounts.not_invoice, "email")} so far`,
+  });
+
+  return html`<div class="pagehead">
+  <div>
+    <h1>Agent tree</h1>
+    <div class="meta">How an email travels through the agents. Click a box to open it; the red-edged boxes are the agents.</div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/agents/classification">Open classification</a>
+    <a class="btn" href="/agents/extraction">Open extraction</a>
+  </div>
+</div>
+
+<div class="tree">
+  <ul>
+    <li>${mailbox}
+      <ul>
+        <li><span class="edge">new mail matching the search</span>${classification}
+          <ul>
+            <li><span class="edge">labels “${s.classify_invoice_label}”</span>${extraction}
+              <ul>
+                <li><span class="edge">files each document, labels “${s.gmail_processed_label || "processed"}”</span>${inbox}
+                  <ul>
+                    <li><span class="edge">approve, then post or key in</span>${sageNode}</li>
+                  </ul>
+                </li>
+              </ul>
+            </li>
+            <li><span class="edge">labels “${s.classify_other_label || "(nothing)"}”</span>${stopped}</li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+  </ul>
+</div>`;
+}
+
 // --------------------------------------------------------------------------- Settings
 
 export function eye() {
@@ -519,7 +615,7 @@ export function settingsPage({ s, gmail, redirectUri, vendorMapText, projectMapT
   </div>
 </section>
 
-<section class="sheet">
+<section class="sheet" id="gmail">
   <h2>Gmail</h2>
   <p class="help">
     In Google Cloud Console create a project, enable the <strong>Gmail API</strong>, then under <em>APIs &amp; Services › Credentials</em> create an <strong>OAuth client ID</strong> of type <strong>Web application</strong> and add <code>${redirectUri}</code> as an authorised redirect URI. Paste its client ID and secret here, save, then connect. While the consent screen is in testing mode, add the mailbox as a test user.
@@ -552,7 +648,7 @@ export function settingsPage({ s, gmail, redirectUri, vendorMapText, projectMapT
   <div class="field"><label for="default_currency">Base currency</label><input id="default_currency" name="default_currency" type="text" value="${s.default_currency}" style="max-width:8rem"></div>
 </section>
 
-<section class="sheet">
+<section class="sheet" id="sage">
   <h2>Sage Intacct connection</h2>
   <p class="help">Optional. With these filled in, an approved invoice can be posted straight into Intacct as an AP bill. Without them the app still gives you the bill ready to key in, plus JSON/XML/CSV downloads. Web Services must be enabled on the Intacct company and the sender ID authorised for it.</p>
   <div class="field"><label for="sage_endpoint">Endpoint</label><input id="sage_endpoint" name="sage_endpoint" type="text" value="${s.sage_endpoint}"></div>

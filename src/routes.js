@@ -383,6 +383,23 @@ export async function extractionTab(ctx) {
   });
 }
 
+export async function agentTree(ctx) {
+  const s = ctx.settings;
+  const hasTok = await gmail.hasToken(ctx.env);
+  const [status, classifyRun, extractRun, classCounts, invoiceCounts] = await Promise.all([
+    hasTok ? gmail.connectionStatus(ctx.env, s) : { connected: false, email: null, error: null },
+    db.lastRun(ctx.env.DB, "classify"),
+    db.lastRun(ctx.env.DB, "extract"),
+    db.classificationCounts(ctx.env.DB),
+    db.statusCounts(ctx.env.DB),
+  ]);
+  return render(ctx, {
+    title: "Agent tree",
+    active: "tree",
+    body: pages.agentTreePage({ s, gmail: status, claudeReady: hasClaude(s), sageReady: hasSage(s), classifyRun, extractRun, classCounts, invoiceCounts }),
+  });
+}
+
 export async function extractionSave(ctx) {
   const form = await ctx.request.formData();
   const settings = ctx.settings;
