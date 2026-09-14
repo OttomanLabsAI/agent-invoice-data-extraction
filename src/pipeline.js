@@ -4,6 +4,7 @@ import * as db from "./db.js";
 import { extractInvoice, classifyEmail } from "./claude.js";
 import * as gmail from "./gmail.js";
 import { build } from "./sage_mapper.js";
+import { resolveType, applyTypeDefaults } from "./invoice_types.js";
 import { hasClaude, DEFAULT_MODEL } from "./settings.js";
 
 const safeName = (name) => String(name || "attachment").replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
@@ -47,6 +48,7 @@ export async function processAttachment(env, settings, { data, filename, mimeTyp
     return db.insertInvoice(env.DB, { ...base, status: "error", error: `${err.name || "Error"}: ${err.message || err}` });
   }
 
+  extracted = applyTypeDefaults(extracted, resolveType(extracted, settings, {}).type).rec;
   const mapped = build(extracted, settings, { emailMeta: meta });
   const status = ["invoice", "credit_note"].includes(extracted.document_type) ? "review" : "not_invoice";
   return db.insertInvoice(env.DB, {

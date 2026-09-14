@@ -12,6 +12,7 @@ import { toCsv } from "./csv.js";
 import { describe as ragDescribe } from "./rag.js";
 import { INVOICE_TOOL, LINE_CATEGORIES, DOCUMENT_TYPES, VAT_TREATMENTS } from "./schema.js";
 import * as pipeline from "./pipeline.js";
+import { resolveType, applyTypeDefaults, normaliseType, newTypeId, TYPE_SIGNALS } from "./invoice_types.js";
 import {
   CLAUDE_MODELS, TEXT_FIELDS, INT_FIELDS, formatMap, parseMap, hasClaude, hasGoogleClient, hasSage, saveSettings,
 } from "./settings.js";
@@ -177,6 +178,8 @@ export async function invoiceDetail(ctx) {
       vatTreatments: VAT_TREATMENTS,
       documentTypes: DOCUMENT_TYPES,
       sageReady: hasSage(ctx.settings),
+      invoiceTypes: ctx.settings.invoice_types || [],
+      chosenType: overrides.invoice_type || "",
     }),
   });
 }
@@ -223,8 +226,9 @@ export async function invoiceSave(ctx) {
   rec.cis = { ...(rec.cis || {}), applicable: form.get("cis_applicable") === "on", deduction_rate: numOrNull(form.get("cis_rate")), deduction_amount: numOrNull(form.get("cis_amount")) };
   rec.retention = { ...(rec.retention || {}), applicable: Boolean(numOrNull(form.get("retention_amount"))), percentage: numOrNull(form.get("retention_pct")), amount: numOrNull(form.get("retention_amount")) };
 
-  const normalised = normalise(rec);
-  const overrides = { vendor_id: field(form, "vendor_id"), project_id: field(form, "project_id") };
+  let normalised = normalise(rec);
+  const overrides = { vendor_id: field(form, "vendor_id"), project_id: field(form, "project_id"), invoice_type: field(form, "invoice_type") };
+  normalised = applyTypeDefaults(normalised, resolveType(normalised, ctx.settings, overrides).type).rec;
   normalised.sage_overrides = overrides;
   const mapped = pipeline.remap({ ...invoice, extracted: normalised }, ctx.settings, overrides);
   await db.updateInvoice(ctx.env.DB, invoice.id, { extracted: normalised, sage: mapped, issues: mapped.issues, notes: field(form, "notes") });
@@ -412,6 +416,64 @@ export async function extractionSave(ctx) {
 export async function extractionRun(ctx) {
   const result = await pipeline.extractStep(ctx.env, ctx.settings);
   return redirect(ctx, result.ok && result.remaining ? "/agents/extraction?continue=1" : "/agents/extraction", [result.ok ? "ok" : "error", result.message]);
+}
+
+// --------------------------------------------------------------------------- Invoice types
+
+export async function typesTab(ctx) {
+  return render(ctx, {
+    title: "Invoice types",
+    active: "types",
+    body: pages.typesPage({ types: ctx.settings.invoice_types || [], categories: LINE_CATEGORIES }),
+  });
+}
+
+function readType(form, t) {
+  const f = (name) => `${t.id}__${name}`;
+  if (!form.has(f("name"))) return t;
+  return normaliseType({
+    id: t.id,
+    name: field(form, f("name")) || t.name,
+    description: field(form, f("description")),
+    suppliers: String(form.get(f("suppliers")) || ""),
+    categories: LINE_CATEGORIES.filter((c) => form.has(f("cat_" + c))),
+    signals: TYPE_SIGNALS.map(([k]) => k).filter((k) => form.has(f("sig_" + k))),
+    gl_map: Object.fromEntries(LINE_CATEGORIES.map((c) => [c, field(form, f("gl_" + c))])),
+    vat_detail_map: { "20": field(form, f("vat_20")), "5": field(form, f("vat_5")), "0": field(form, f("vat_0")), reverse_charge: field(form, f("vat_rc")) },
+    cis_applies: form.has(f("cis_applies")),
+    cis_rate: field(form, f("cis_rate")),
+    retention_percent: field(form, f("retention_percent")),
+    terms_days: field(form, f("terms_days")),
+    po_required: form.has(f("po_required")),
+    project_required: form.has(f("project_required")),
+    expected_vat: field(form, f("expected_vat")),
+    location_id: field(form, f("location_id")),
+    department_id: field(form, f("department_id")),
+    sage_action: field(form, f("sage_action")),
+  });
+}
+
+export async function typesSave(ctx) {
+  const form = await ctx.request.formData();
+  const settings = ctx.settings;
+  const action = field(form, "action");
+  let types = (settings.invoice_types || []).map((t) => readType(form, t));
+  let anchor = "";
+  let message = "Invoice types saved.";
+  if (action === "add") {
+    const id = newTypeId(types.map((t) => t.id));
+    types.push(normaliseType({ id, name: "New type" }));
+    anchor = `#type-${id}`;
+    message = "Type added - name it and save.";
+  } else if (action.startsWith("remove:")) {
+    const id = action.slice(7);
+    const gone = types.find((t) => t.id === id);
+    types = types.filter((t) => t.id !== id);
+    message = gone ? `Removed the ${gone.name} type.` : message;
+  }
+  settings.invoice_types = types;
+  await saveSettings(ctx.env.DB, settings);
+  return redirect(ctx, "/types" + anchor, ["ok", message]);
 }
 
 // --------------------------------------------------------------------------- Settings

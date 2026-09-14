@@ -6,34 +6,8 @@
 //   log_row     - flat row for the purchase invoice log / CSV export
 //   xml         - the <create> function body for the Intacct XML gateway (billToXml)
 
-const LEGAL_SUFFIXES = /\b(ltd|limited|plc|llp|llc|inc|co|company|uk|group|holdings|services|the)\b/g;
-
-function norm(name) {
-  let text = String(name || "").toLowerCase();
-  text = text.replace(/[^a-z0-9 ]+/g, " ");
-  text = text.replace(LEGAL_SUFFIXES, " ");
-  return text.replace(/\s+/g, " ").trim();
-}
-
-/** Returns [value, matchedKey]. Exact normalised match first, then containment either way. */
-function lookup(mapping, ...candidates) {
-  if (!mapping || !Object.keys(mapping).length) return ["", ""];
-  const normalised = new Map();
-  for (const [k, v] of Object.entries(mapping)) if (k && v) normalised.set(norm(k), [k, v]);
-  const cands = candidates.filter(Boolean).map(norm);
-  for (const cand of cands) {
-    if (normalised.has(cand)) {
-      const [key, value] = normalised.get(cand);
-      return [value, key];
-    }
-  }
-  for (const cand of cands) {
-    for (const [nkey, [key, value]] of normalised) {
-      if (nkey.length >= 3 && (cand.includes(nkey) || nkey.includes(cand))) return [value, key];
-    }
-  }
-  return ["", ""];
-}
+import { lookup } from "./match.js";
+import { resolveType, effectiveCoding } from "./invoice_types.js";
 
 export function money(value) {
   const n = parseFloat(value);
@@ -107,6 +81,8 @@ export function build(rec, settings, { emailMeta = {}, overrides = {} } = {}) {
   const supplier = rec.supplier || {};
   const supplierName = supplier.name || "";
   const currency = String(rec.currency || settings.default_currency || "GBP").toUpperCase();
+  const { type, how: typeHow } = resolveType(rec, settings, overrides);
+  const coding = effectiveCoding(settings, type);
 
   // ---- Vendor
   let vendorId = overrides.vendor_id || "";
@@ -143,16 +119,19 @@ export function build(rec, settings, { emailMeta = {}, overrides = {} } = {}) {
       rec.project_reference, rec.po_number, rec.order_reference, rec.site_address, emailMeta.subject,
     );
   }
-  if (!projectId && Object.keys(settings.project_map || {}).length) {
+  const projectRequired = Boolean(type && type.project_required);
+  if (!projectId && projectRequired) {
+    issues.push(`No Sage project - ${type.name} invoices are project costs. Add the project ID on the invoice or in Settings > Project map.`);
+  } else if (!projectId && Object.keys(settings.project_map || {}).length) {
     notes.push("No project matched - bill will post without a project dimension.");
   }
 
   // ---- Lines
-  const glMap = settings.gl_map || {};
-  const vatMap = settings.vat_detail_map || {};
+  const glMap = coding.gl_map;
+  const vatMap = coding.vat_detail_map;
   const reverseCharge = rec.vat_treatment === "reverse_charge";
   const sign = isCredit ? -1 : 1;
-  const ctx = { locationId: settings.sage_location_id || "", departmentId: settings.sage_department_id || "", projectId };
+  const ctx = { locationId: coding.location_id, departmentId: coding.department_id, projectId };
 
   const items = [];
   const missingGl = new Set();
@@ -218,7 +197,16 @@ export function build(rec, settings, { emailMeta = {}, overrides = {} } = {}) {
 
   if (reverseCharge) notes.push("Domestic reverse charge - no VAT is paid to the supplier; Sage posts the input and output VAT.");
   if (rec.totals_reconcile === false) issues.push("Totals on the document do not add up - check the lines against the PDF.");
-  if (!rec.po_number) notes.push("No purchase order number on the invoice.");
+  const poMissing = !(overrides.po_number || rec.po_number);
+  if (poMissing && type && type.po_required) issues.push(`No purchase order number - ${type.name} invoices need one.`);
+  else if (poMissing) notes.push("No purchase order number on the invoice.");
+  if (type && !isCredit) {
+    if (type.expected_vat === "reverse_charge" && !reverseCharge) {
+      notes.push(`${type.name} invoices usually fall under the domestic reverse charge; this one shows ${(rec.vat_treatment || "unknown").replace(/_/g, " ")} VAT. Check before posting.`);
+    } else if (type.expected_vat === "standard" && reverseCharge) {
+      notes.push(`${type.name} invoices are not usually reverse charged. Check the VAT treatment before posting.`);
+    }
+  }
   if (!["invoice", "credit_note"].includes(docType)) issues.push(`Document looks like a ${docType.replace(/_/g, " ")}, not an invoice.`);
   for (const flag of rec.flags || []) notes.push(flag);
 
@@ -239,7 +227,7 @@ export function build(rec, settings, { emailMeta = {}, overrides = {} } = {}) {
     TERMNAME: termName,
     BASECURR: settings.default_currency || "GBP",
     CURRENCY: currency,
-    ACTION: settings.sage_action || "Draft",
+    ACTION: coding.sage_action,
     TAXSOLUTIONID: settings.sage_tax_solution_id || "",
     ITEMS: items,
   };
@@ -268,6 +256,7 @@ export function build(rec, settings, { emailMeta = {}, overrides = {} } = {}) {
   const entrySheet = {
     header: [
       ["Vendor", vendorId || "(not mapped)", supplierName],
+      ["Invoice type", type ? type.name : "(none)", type ? typeHow : ""],
       ["Bill date", invoiceDate, ""],
       ["Due date", dueDate, termName ? `terms: ${termName}` : ""],
       ["Bill number", recordId, "supplier's invoice number"],
@@ -294,6 +283,7 @@ export function build(rec, settings, { emailMeta = {}, overrides = {} } = {}) {
     "Sage vendor ID": vendorId,
     "Invoice no": recordId,
     Type: docType.replace(/_/g, " "),
+    "Invoice type": type ? type.name : "",
     "Invoice date": invoiceDate,
     "Due date": dueDate,
     "PO no": poNumber,
@@ -322,6 +312,7 @@ export function build(rec, settings, { emailMeta = {}, overrides = {} } = {}) {
     entry_sheet: entrySheet,
     log_row: logRow,
     matched: { vendor_key: matchedVendorKey, project_key: matchedProjectKey },
+    invoice_type: type ? { id: type.id, name: type.name, how: typeHow } : null,
   };
 }
 
@@ -384,7 +375,7 @@ export function publicBill(bill) {
 }
 
 export const LOG_COLUMNS = [
-  "Date received", "Supplier", "Sage vendor ID", "Invoice no", "Type", "Invoice date", "Due date", "PO no",
+  "Date received", "Supplier", "Sage vendor ID", "Invoice no", "Type", "Invoice type", "Invoice date", "Due date", "PO no",
   "Project", "Description", "Currency", "Net", "VAT", "Gross", "VAT treatment", "CIS deduction", "Retention",
   "Amount payable", "Supplier VAT no", "Status", "Sage record no", "Email from", "Email subject", "Attachment",
   "Confidence", "Checks",

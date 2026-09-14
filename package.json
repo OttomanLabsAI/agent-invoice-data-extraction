@@ -1,6 +1,6 @@
 {
   "name": "agent-invoice-data-extraction",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "private": true,
   "type": "module",
   "description": "Glent Group invoice intake agent: a Cloudflare Worker that reads supplier invoices from Gmail with Claude and prepares Sage Intacct bills",

@@ -1,6 +1,8 @@
 // Settings: defaults, storage in D1 (settings table, one row per key) and the
 // "key = value" map parsing used by the Sage coding fields.
 
+import { DEFAULT_TYPES, normaliseType } from "./invoice_types.js";
+
 export const CLAUDE_MODELS = [
   ["claude-opus-5", "Claude Opus 5 (default)"],
   ["claude-sonnet-5", "Claude Sonnet 5 (faster, cheaper)"],
@@ -90,6 +92,8 @@ export const DEFAULTS = {
     reverse_charge: "UK Purchase Services Reverse Charge Standard Rate",
   },
   terms_map: { "0": "Due on receipt", "7": "Net 7", "14": "Net 14", "30": "Net 30", "45": "Net 45", "60": "Net 60", "90": "Net 90" },
+  // Invoice types: per-kind overrides and checks on top of the coding above (see invoice_types.js)
+  invoice_types: DEFAULT_TYPES,
 };
 
 /** What each generic code stands for, shown on the Settings page. */
@@ -102,7 +106,9 @@ export const GENERIC_CODES = [
 export function withDefaults(stored) {
   const settings = structuredClone(DEFAULTS);
   for (const [key, value] of Object.entries(stored || {})) {
-    if (MAP_FIELDS.has(key) && value && typeof value === "object") {
+    if (key === "invoice_types") {
+      if (Array.isArray(value)) settings.invoice_types = value.map((t, i) => normaliseType(t, i));
+    } else if (MAP_FIELDS.has(key) && value && typeof value === "object") {
       settings[key] = { ...(DEFAULTS[key] || {}), ...value };
     } else if (key in DEFAULTS) {
       settings[key] = value;

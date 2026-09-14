@@ -19,7 +19,7 @@ npm run check                    # wrangler deploy --dry-run
 
 ```
 src/index.js          fetch + scheduled entry, router, sign-in gate, security headers
-src/routes.js         handlers only; no business logic (GET /agents is the tree, /agents/<name> the agent tabs)
+src/routes.js         handlers only; no business logic (GET /agents is the tree, /agents/<name> the agent tabs, /types the invoice types)
 src/pipeline.js       processAttachment, remap, classifyStep, extractStep, checkInboxStep, runScheduled
 src/claude.js         Messages API via fetch: extractInvoice, classifyEmail, checkApiKey; base64 media blocks
 src/gmail.js          OAuth (web client), token refresh, REST client: list/fetch/attachments/labels/modify
@@ -27,14 +27,16 @@ src/schema.js         INVOICE_TOOL, CLASSIFY_TOOL, LINE_CATEGORIES/DOCUMENT_TYPE
 src/normalise.js      normalise(), totalsReconcile()
 src/rag.js            retrieve(text, query): whole text under RAG_MAX_CHARS, else paragraph retrieval
 src/sage_mapper.js    build(record, settings, {emailMeta, overrides}), billToXml, publicBill, LOG_COLUMNS
+src/invoice_types.js  DEFAULT_TYPES, normaliseType, resolveType, effectiveCoding, applyTypeDefaults
+src/match.js          norm/lookup/nameListed: the fuzzy supplier matching shared by the maps and the types
 src/sage_client.js    Intacct XML gateway (getAPISession, create), regex-parsed responses
 src/settings.js       DEFAULTS, loadSettings/saveSettings (D1 settings table), parseMap/formatMap, CLAUDE_MODELS
 src/db.js             D1 schema (settings, state, invoices, runs, classifications) and queries; run lock
 src/auth.js           APP_PASSWORD check, HMAC session cookie, same-origin check for posts
 src/fixtures.js       fake mailbox + fake Claude, only when env.TEST_FIXTURES === "1"
 src/views/html.js     html`` tag that escapes interpolations; raw(); money/shortDate filters
-src/views/layout.js   page frame with the five tabs (Inbox, Agent tree, the two agents, Settings); ASSET_VERSION; continueNudge
-src/views/pages.js    sign-in, setup, inbox, invoice review, agent tree, both agent tabs, settings, 404
+src/views/layout.js   page frame with the six tabs (Inbox, Agent tree, the two agents, Invoice types, Settings); ASSET_VERSION; continueNudge
+src/views/pages.js    sign-in, setup, inbox, invoice review, agent tree, both agent tabs, invoice types, settings, 404
 public/               static assets: assets/css/style.css, assets/js/app.js, favicon.svg, robots.txt (Disallow), _headers
 tests/unit.test.js    mapper, normalise, rag, csv, settings, helpers
 tests/smoke.js        end-to-end over HTTP against wrangler dev (fixture mode)
@@ -50,6 +52,7 @@ Invoice statuses: `review` -> `approved` -> `posted`; side states `queried`, `no
 
 - **Extraction schema** is `INVOICE_TOOL.input_schema` in `src/schema.js`. Add fields there, then in `normalise()`, then in the review form (`views/pages.js` invoicePage + `routes.invoiceSave`), then in `sage_mapper` if Sage needs them. The extraction tab renders the schema, so it documents itself.
 - **Claude calls** go through `fetch` in `src/claude.js` with `anthropic-version: 2023-06-01`. `tool_choice` is `auto` with a text-JSON fallback. Do not force `tool_choice` - it is rejected when a model has thinking on (Fable 5.1 does). Do not send a `thinking` param. Model IDs live in `settings.CLAUDE_MODELS`; the default for both agents is `settings.DEFAULT_MODEL` (`claude-opus-5`), chosen per agent on its tab.
+- **Invoice types** (`src/invoice_types.js`, stored as `settings.invoice_types`, five generic `DEFAULT_TYPES`): `resolveType` picks one per invoice - `overrides.invoice_type` first, then a supplier listed on a type, then a ticked signal (CIS shown / reverse charge / application for payment), then the dominant line category by net, else the type whose categories include `other`. `effectiveCoding` layers the type's non-blank GL / VAT / location / department / action over the Settings values, and `build` uses that; a type can make a missing PO or project a blocking issue and notes an unexpected VAT treatment. `applyTypeDefaults` fills only blanks (CIS deduction from the labour lines at the default rate, retention on the net, payment terms) and records what it did as flags; it runs once at extraction (`processAttachment`) and again on every review-page save. Types are edited on `/types` (fields named `<id>__<field>`, `action=add` / `remove:<id>`); old stored types are filled in by `normaliseType`. The entry sheet and CSV carry the type name.
 - **Reference text (RAG):** `rag.retrieve(text, query)` returns the whole text under 16,000 characters, otherwise the paragraphs (blank-line separated) sharing the most words with the email, in original order, within the budget. It is appended to the system prompt as "Reference notes from the accounts team".
 - **Batches:** `CLASSIFY_BATCH` 5 and `EXTRACT_BATCH` 1 per request keep each request short. A step reports `remaining` by asking Gmail for one more message than the batch; the page then shows the continue nudge (`?continue=1`) and `app.js` re-posts after three seconds unless stopped. The cron handler (`runScheduled`) classifies one batch and extracts two, gated by `poll_minutes` and the `last_auto_run` state key.
 - **Run lock** is the `run_lock` state row, taken with a conditional UPDATE (`db.acquireRunLock`); a lock older than ten minutes is treated as stale.
@@ -75,7 +78,7 @@ Working and checked: unit tests and the HTTP smoke test green, the whole app cli
 
 Not yet exercised: a real deploy on the owner's Cloudflare account (first deploy provisions the D1 database and R2 bucket by name; if that fails, create them and set `database_id`), Gmail OAuth with a Web-application client on the deployed host, Claude extraction on a real invoice (fixture-only in tests - run the sample PDF through *Process upload* with a live key first), and the Intacct push - written to the XML gateway spec, never sent to a live company. First real post should be `Draft`, compared against a hand-keyed bill; expect to adjust `TAXSOLUTIONID` / tax detail names / whether PO matching should go through Purchasing rather than `DOCNUMBER`.
 
-Sage coding defaults are generic (`settings.DEFAULTS` + `GENERIC_CODES`): Sage-style nominal codes per category, 2214/2215 for CIS and retention, Intacct's standard UK VAT detail names, terms 0-90 days, and the sample invoice's supplier `V0088` / project `P-HEL18` so the sample maps end to end. Location and department stay blank. Real IDs come from Glent's Intacct lists and must replace these before the first Draft post.
+Invoice types default to five generic kinds (Subcontractor, Materials supplier, Plant hire, Professional services, Overheads) with generic overrides; the sample invoice resolves to Subcontractor by its CIS / reverse-charge signals and codes wholly to 6002. Sage coding defaults are generic (`settings.DEFAULTS` + `GENERIC_CODES`): Sage-style nominal codes per category, 2214/2215 for CIS and retention, Intacct's standard UK VAT detail names, terms 0-90 days, and the sample invoice's supplier `V0088` / project `P-HEL18` so the sample maps end to end. Location and department stay blank. Real IDs come from Glent's Intacct lists and must replace these before the first Draft post.
 
 ## Next steps, in rough order
 
@@ -91,7 +94,7 @@ Sage coding defaults are generic (`settings.DEFAULTS` + `GENERIC_CODES`): Sage-s
 - Every push to `main` is a release. Versions are an ascending `vMAJOR.MINOR` sequence; minor bump per push, major reserved for a ground-up overhaul.
 - Commits: descriptive imperative first line, short prose body. No AI-attribution trailers, model names, session links or tooling identifiers in commits, titles or code comments. (The model IDs in `settings.js` are application configuration and stay.)
 - Never push tags. Put the release text (Tag / Title / Description) in the reply so the GitHub release can be created by hand, and append a line to the ledger below.
-- Before every push: `npm test` and `npm run smoke` green, `npm run check` clean, start `npm run dev` and click through sign-in -> Inbox -> sample upload -> review -> Agent tree -> both agent tabs -> Settings, and confirm `git status` shows no `.dev.vars` or `.wrangler/`.
+- Before every push: `npm test` and `npm run smoke` green, `npm run check` clean, start `npm run dev` and click through sign-in -> Inbox -> sample upload -> review -> Agent tree -> both agent tabs -> Invoice types -> Settings, and confirm `git status` shows no `.dev.vars` or `.wrangler/`.
 
 ### Release ledger
 
@@ -102,3 +105,4 @@ Sage coding defaults are generic (`settings.DEFAULTS` + `GENERIC_CODES`): Sage-s
 | v2.1 | 14 Sep 2026 | Claude Opus 5 is the default model for both agents. |
 | v2.2 | 14 Sep 2026 | Agent tree tab: a clickable map of the mailbox, the two agents, the Inbox and Sage, with each box showing its model, last run and counts. |
 | v2.3 | 14 Sep 2026 | Sage coding pre-filled with generic contractor defaults: nominal codes per category, CIS and retention accounts, UK VAT detail names, payment terms, and the sample supplier and project. |
+| v2.4 | 14 Sep 2026 | Invoice types: five generic kinds of invoice, each with its own GL and VAT overrides, CIS and retention defaults, terms and PO / project checks, matched automatically and changeable on the review page. |

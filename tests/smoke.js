@@ -189,6 +189,36 @@ async function run() {
   page = await req("/export.csv");
   check(page.status === 200 && page.text.includes("NMS-2026-0417") && page.text.includes("Sage vendor ID") && page.text.includes("Needs review"), "CSV export has the log row");
 
+  // ---- Invoice types
+  page = await req("/types");
+  check(page.status === 200 && page.text.includes("<h1>Invoice types</h1>") && (page.text.match(/<section class="sheet type"/g) || []).length === 5, "invoice types tab lists the five generic types");
+  check(page.text.includes('id="type-subcontractor"') && page.text.includes('value="6002"'), "subcontractor type carries its coding");
+  page = await req("/invoice/1");
+  check(page.text.includes('name="invoice_type"') && page.text.includes("Automatic - Subcontractor") && page.text.includes("CIS is shown on the invoice"), "review page shows the matched type");
+  check(page.text.includes("<dt>Invoice type</dt><dd class=\"\">Subcontractor"), "entry sheet names the type");
+  page = await req("/invoice/1/sage.xml");
+  check((page.text.match(/<ACCOUNTNO>6002<\/ACCOUNTNO>/g) || []).length === 5, "type GL override beats the company-wide map");
+  page = await req("/export.csv");
+  check(page.text.includes("Invoice type") && page.text.includes(",Subcontractor,"), "CSV carries the invoice type");
+  // Change the subcontractor coding, then rebuild the invoice from settings
+  const typeForm = { subcontractor__name: "Subcontractor", subcontractor__description: "Subbies", subcontractor__suppliers: "", subcontractor__sig_cis: "on", subcontractor__sig_reverse_charge: "on", subcontractor__cat_labour: "on",
+    subcontractor__gl_labour: "6010", subcontractor__gl_materials: "6010", subcontractor__gl_plant: "6010", subcontractor__gl_subcontract: "6010", subcontractor__gl_services: "6010", subcontractor__gl_expenses: "6010", subcontractor__gl_other: "6010",
+    subcontractor__vat_20: "", subcontractor__vat_5: "", subcontractor__vat_0: "", subcontractor__vat_rc: "UK Purchase Services Reverse Charge Standard Rate",
+    subcontractor__cis_applies: "on", subcontractor__cis_rate: "20", subcontractor__retention_percent: "", subcontractor__terms_days: "45", subcontractor__project_required: "on", subcontractor__expected_vat: "reverse_charge",
+    subcontractor__location_id: "", subcontractor__department_id: "", subcontractor__sage_action: "Submit" };
+  page = await req("/types", { method: "POST", form: typeForm });
+  check(page.text.includes("Invoice types saved.") && page.text.includes('value="6010"') && page.text.includes('value="45"'), "type edits saved");
+  page = await req("/invoice/1/remap", { method: "POST" });
+  page = await req("/invoice/1/sage.xml");
+  check((page.text.match(/<ACCOUNTNO>6010<\/ACCOUNTNO>/g) || []).length === 5 && page.text.includes("<ACTION>Submit</ACTION>"), "rebuilt invoice uses the edited type coding and posting action");
+  page = await req("/types", { method: "POST", form: { action: "add" } });
+  const added = (page.text.match(/id="type-(type_[a-z0-9]+)"/) || [])[1];
+  check(Boolean(added) && (page.text.match(/<section class="sheet type"/g) || []).length === 6 && page.text.includes("Type added"), "a type can be added");
+  page = await req("/types", { method: "POST", form: { action: `remove:${added}` } });
+  check((page.text.match(/<section class="sheet type"/g) || []).length === 5 && page.text.includes("Removed the New type type."), "a type can be removed");
+  page = await req("/types");
+  check(page.text.includes('value="6010"'), "the other types survive an add and a remove");
+
   // ---- Edit and save through the form
   page = await req("/invoice/1", {
     method: "POST",
@@ -196,7 +226,7 @@ async function run() {
       document_type: "invoice", supplier_name: "Northbank Mechanical Services Ltd", supplier_vat: "GB452889107",
       vendor_id: "V0088", invoice_number: "NMS-2026-0417", invoice_date: "2026-09-08", due_date: "2026-10-08",
       po_number: "GG-HEL18-00231", project_reference: "HEL18", project_id: "P-HEL18",
-      description: "Edited description", currency: "GBP", vat_treatment: "reverse_charge",
+      description: "Edited description", currency: "GBP", vat_treatment: "reverse_charge", invoice_type: "materials",
       line_desc: ["Labour", "Materials"], line_qty: ["1", "1"], line_unit: ["lot", "lot"], line_unit_price: ["", ""],
       line_net: ["4914.00", "7735.00"], line_vat_rate: ["20", "20"], line_vat: ["0", "0"], line_category: ["labour", "materials"],
       net_total: "12649.00", vat_total: "0.00", gross_total: "12649.00",
@@ -206,6 +236,7 @@ async function run() {
   });
   check(page.status === 200 && page.text.includes("Saved. Sage payload rebuilt.") && page.text.includes('value="Edited description"'), "form edits saved");
   check(page.text.includes("checked against AFP-07"), "notes saved");
+  check(page.text.includes('<option value="materials" selected>') && page.text.includes("chosen on the invoice") && page.text.includes("not usually reverse charged"), "type chosen by hand on the review page, with its VAT note");
   page = await req("/invoice/1/sage.json");
   check(JSON.parse(page.text).APBILL.APBILLITEMS.length === 4, "payload rebuilt from the edited lines (2 + CIS + retention)");
   page = await req("/invoice/1/remap", { method: "POST" });

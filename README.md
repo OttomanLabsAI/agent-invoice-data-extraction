@@ -48,6 +48,8 @@ The maps come pre-filled with generic starting points for a UK contractor paying
 
 Anything that cannot be mapped is listed as a check on the invoice and blocks *Approve* until you fill it in (you can type a vendor or project ID straight on the invoice).
 
+**Invoice types** - different kinds of invoice need different coding, so the *Invoice types* tab carries one set of overrides and checks per kind. Five generic types come ready: *Subcontractor* (the whole invoice to the subcontractor account, services VAT details, CIS at 20% on the labour lines where the invoice is silent, a project required, reverse charge expected), *Materials supplier* (goods VAT, PO and project required), *Plant hire*, *Professional services* and *Overheads* (the fallback). Each type can override the GL account per line category, the VAT tax details, location, department and the Draft/Submit action, and can fill in what the invoice leaves out: a CIS deduction at a default rate, retention at a default percentage, payment terms. A missing PO or project blocks approval for types that need one; an unexpected VAT treatment is noted for the reviewer. Invoices are matched to a type by supplier name, then by CIS, reverse charge or application-for-payment signals, then by what the lines mostly are; the review page shows the match and lets you change it. Types can be renamed, added and removed.
+
 ## The two agents
 
 **Agent - Classification** reads new mail and decides, email by email, whether it carries an invoice. Its tab holds the model (Opus 5 by default; it is a short call per email, so a cheaper model will do if volume gets high), the reference text, the Gmail search it sweeps (`has:attachment is:unread` by default), an optional sender allow-list, and the two labels it applies: `Invoice Incoming` for invoices and `Not an invoice` for everything else, so nothing is read twice. It never marks mail read. The tab lists its recent decisions with the reason for each. You can also apply the `Invoice Incoming` label by hand in Gmail to push an email through.
@@ -65,7 +67,7 @@ Both agents work in small batches per click (five emails classified, one email e
 1. **Check inbox now** (or set automatic checks on the extraction tab) - or drag a PDF onto *Process upload* to test.
 2. Each attachment appears in the Inbox as *Needs review* with the number of open checks.
 3. Open it: the left side is the extracted data (editable, with the line editor recalculating new lines), the right side is the document and the **Key into Sage** sheet in the order of Intacct's bill screen.
-4. **Save changes** rebuilds the Sage payload. **Approve** once the checks are clear.
+4. **Save changes** rebuilds the Sage payload (change the invoice type here if the match is wrong). **Approve** once the checks are clear.
 5. **Post to Sage** (if connected) or **Mark keyed in by hand**; **Query** parks it.
 6. **Download log CSV** on the Inbox for the purchase invoice log - one row per invoice, columns match the entry sheet.
 

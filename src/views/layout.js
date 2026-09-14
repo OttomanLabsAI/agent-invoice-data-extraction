@@ -1,13 +1,14 @@
 import { html, raw } from "./html.js";
 
 /** Bump when style.css or app.js change: assets are cached immutably for a year. */
-export const ASSET_VERSION = "2.2";
+export const ASSET_VERSION = "2.4";
 
 export const TABS = [
   ["inbox", "/", "Inbox"],
   ["tree", "/agents", "Agent tree"],
   ["classification", "/agents/classification", "Agent - Classification"],
   ["extraction", "/agents/extraction", "Agent - Invoice Extraction"],
+  ["types", "/types", "Invoice types"],
   ["settings", "/settings", "Settings"],
 ];
 

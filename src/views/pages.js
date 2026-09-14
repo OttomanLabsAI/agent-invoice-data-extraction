@@ -2,6 +2,7 @@ import { html, raw, when, selected, checked, disabled, money, shortDate, timeOf,
 import { continueNudge } from "./layout.js";
 import { STATUSES, STATUS_LABELS } from "../db.js";
 import { modelLabel, GENERIC_CODES } from "../settings.js";
+import { TYPE_SIGNALS, EXPECTED_VAT } from "../invoice_types.js";
 
 // --------------------------------------------------------------------------- Sign-in and setup
 
@@ -104,7 +105,7 @@ ${invoices.length
 
 // --------------------------------------------------------------------------- Invoice review
 
-export function invoicePage({ inv, rec, sage, vendorId, projectId, billJson, billXml, categories, vatTreatments, documentTypes, sageReady }) {
+export function invoicePage({ inv, rec, sage, vendorId, projectId, billJson, billXml, categories, vatTreatments, documentTypes, sageReady, invoiceTypes = [], chosenType = "" }) {
   const supplier = rec.supplier || {};
   const bank = rec.bank_details || {};
   const cis = rec.cis || {};
@@ -160,6 +161,12 @@ ${rec && Object.keys(rec).length
       <div class="field"><label for="vendor_id">Sage vendor ID<small>from Settings › Vendor map</small></label>
         <input id="vendor_id" name="vendor_id" type="text" value="${vendorId}" placeholder="e.g. V0123">
         ${when(matched.vendor_key, html`<div class="hint">Matched “${matched.vendor_key}” in the vendor map.</div>`)}</div>
+      ${when(invoiceTypes.length, html`<div class="field"><label for="invoice_type">Invoice type<small>from the Invoice types tab</small></label>
+        <select id="invoice_type" name="invoice_type">
+          <option value=""${selected(chosenType, "")}>Automatic${sage.invoice_type && !chosenType ? ` - ${sage.invoice_type.name}` : ""}</option>
+          ${invoiceTypes.map((t) => html`<option value="${t.id}"${selected(chosenType, t.id)}>${t.name}</option>`)}
+        </select>
+        ${when(sage.invoice_type, html`<div class="hint">${sage.invoice_type.name}: ${sage.invoice_type.how}. The type sets the GL and VAT coding, CIS and retention defaults, and which checks apply; <a href="/types#type-${sage.invoice_type.id}">edit it</a>.</div>`)}</div>`)}
       <div class="field"><label for="invoice_number">Invoice number</label><input id="invoice_number" name="invoice_number" type="text" value="${rec.invoice_number || ""}"></div>
       <div class="field"><label>Dates</label>
         <div class="row"><input name="invoice_date" type="date" value="${rec.invoice_date || ""}" aria-label="Invoice date"><input name="due_date" type="date" value="${rec.due_date || bill.WHENDUE || ""}" aria-label="Due date"></div>
@@ -572,6 +579,102 @@ export function agentTreePage({ s, gmail, claudeReady, sageReady, classifyRun, e
 </div>`;
 }
 
+// --------------------------------------------------------------------------- Invoice types
+
+const tinyLabel = (id, text) => html`<label for="${id}" style="font-size:0.85rem;color:var(--ink-soft)">${text}</label>`;
+
+function typeSheet(t, categories) {
+  const f = (name) => `${t.id}__${name}`;
+  return html`<section class="sheet type" id="type-${t.id}">
+  <div class="typehead">
+    <h2>${t.name}</h2>
+    <button class="btn small quiet" type="submit" name="action" value="remove:${t.id}" formnovalidate onclick="return confirm('Remove the ${t.name} type? Invoices already coded keep their coding.')">Remove type</button>
+  </div>
+  <div class="field"><label for="${f("name")}">Name</label><input id="${f("name")}" name="${f("name")}" type="text" value="${t.name}" required></div>
+  <div class="field"><label for="${f("description")}">What it covers</label><input id="${f("description")}" name="${f("description")}" type="text" value="${t.description}"></div>
+
+  <div class="field">
+    <label>Matched when</label>
+    <div>
+      <div class="hint" style="margin:0 0 0.4rem">In this order: the supplier is listed below; one of the ticked signals is on the invoice; the lines are mostly a ticked category. Any invoice can be moved to another type by hand on its review page.</div>
+      <textarea id="${f("suppliers")}" name="${f("suppliers")}" placeholder="One supplier name per line, matched like the vendor map" style="min-height:3.5rem">${t.suppliers}</textarea>
+      <div class="checks" style="margin-top:0.5rem">
+        ${TYPE_SIGNALS.map(([key, label]) => html`<label><input type="checkbox" name="${f("sig_" + key)}"${checked(t.signals.includes(key))}> ${label}</label>`)}
+      </div>
+      <div class="checks" style="margin-top:0.3rem">
+        ${categories.map((c) => html`<label><input type="checkbox" name="${f("cat_" + c)}"${checked(t.categories.includes(c))}> mostly ${c}</label>`)}
+      </div>
+    </div>
+  </div>
+
+  <div class="field">
+    <label>GL account by line category<small>blank = Settings</small></label>
+    <div>
+      <div class="row">
+        ${categories.map((c) => html`<div>${tinyLabel(f("gl_" + c), c)}<input id="${f("gl_" + c)}" name="${f("gl_" + c)}" type="text" value="${t.gl_map[c] || ""}"></div>`)}
+      </div>
+    </div>
+  </div>
+  <div class="field">
+    <label>VAT tax details<small>blank = Settings</small></label>
+    <div class="row">
+      <div>${tinyLabel(f("vat_20"), "20% standard")}<input id="${f("vat_20")}" name="${f("vat_20")}" type="text" value="${t.vat_detail_map["20"] || ""}"></div>
+      <div>${tinyLabel(f("vat_5"), "5% reduced")}<input id="${f("vat_5")}" name="${f("vat_5")}" type="text" value="${t.vat_detail_map["5"] || ""}"></div>
+      <div>${tinyLabel(f("vat_0"), "0% / exempt")}<input id="${f("vat_0")}" name="${f("vat_0")}" type="text" value="${t.vat_detail_map["0"] || ""}"></div>
+      <div>${tinyLabel(f("vat_rc"), "reverse charge")}<input id="${f("vat_rc")}" name="${f("vat_rc")}" type="text" value="${t.vat_detail_map.reverse_charge || ""}"></div>
+    </div>
+  </div>
+  <div class="field">
+    <label>Deductions</label>
+    <div>
+      <div class="checkline" style="margin-top:0.2rem">
+        <label><input type="checkbox" name="${f("cis_applies")}"${checked(t.cis_applies)}> CIS applies</label>
+        <label>Default rate % <input name="${f("cis_rate")}" type="text" value="${t.cis_rate || ""}"></label>
+        <label>Retention % <input name="${f("retention_percent")}" type="text" value="${t.retention_percent || ""}"></label>
+        <label>Terms days <input name="${f("terms_days")}" type="text" value="${t.terms_days === null ? "" : t.terms_days}"></label>
+      </div>
+      <div class="hint">Used only where the invoice is silent: a CIS deduction is computed on the labour lines at the default rate, retention on the net total, and the terms pick the Intacct term name. Blank retention or terms means only what the invoice shows.</div>
+    </div>
+  </div>
+  <div class="field">
+    <label>Checks</label>
+    <div>
+      <div class="checks">
+        <label><input type="checkbox" name="${f("po_required")}"${checked(t.po_required)}> Needs a purchase order number</label>
+        <label><input type="checkbox" name="${f("project_required")}"${checked(t.project_required)}> Needs a Sage project</label>
+      </div>
+      <div class="row" style="margin-top:0.5rem"><div>${tinyLabel(f("expected_vat"), "VAT treatment expected")}<select id="${f("expected_vat")}" name="${f("expected_vat")}">${EXPECTED_VAT.map(([v, label]) => html`<option value="${v}"${selected(t.expected_vat, v)}>${label}</option>`)}</select></div></div>
+      <div class="hint">A missing PO or project blocks Approve; an unexpected VAT treatment is noted for the reviewer.</div>
+    </div>
+  </div>
+  <div class="field">
+    <label>Posting<small>blank = Settings</small></label>
+    <div class="row">
+      <div>${tinyLabel(f("location_id"), "Location ID")}<input id="${f("location_id")}" name="${f("location_id")}" type="text" value="${t.location_id}"></div>
+      <div>${tinyLabel(f("department_id"), "Department ID")}<input id="${f("department_id")}" name="${f("department_id")}" type="text" value="${t.department_id}"></div>
+      <div>${tinyLabel(f("sage_action"), "Create bills as")}<select id="${f("sage_action")}" name="${f("sage_action")}"><option value=""${selected(t.sage_action, "")}>As in Settings</option><option value="Draft"${selected(t.sage_action, "Draft")}>Draft</option><option value="Submit"${selected(t.sage_action, "Submit")}>Submit</option></select></div>
+    </div>
+  </div>
+</section>`;
+}
+
+export function typesPage({ types, categories }) {
+  return html`<div class="pagehead">
+  <div>
+    <h1>Invoice types</h1>
+    <div class="meta">Different kinds of invoice need different coding. Each type overrides the Sage coding in <a href="/settings">Settings</a> for its kind, fills in what the invoice leaves out, and decides which checks block approval. Every invoice is matched to one type and can be moved by hand on its review page.</div>
+  </div>
+  <div class="actions">
+    <button class="btn" type="submit" form="types-form" name="action" value="add" formnovalidate>Add a type</button>
+    <button class="btn primary" type="submit" form="types-form">Save</button>
+  </div>
+</div>
+<form id="types-form" method="post" action="/types" autocomplete="off">
+  ${types.map((t) => typeSheet(t, categories))}
+  <div class="actions"><button class="btn primary" type="submit">Save</button><button class="btn" type="submit" name="action" value="add" formnovalidate>Add a type</button></div>
+</form>`;
+}
+
 // --------------------------------------------------------------------------- Settings
 
 export function eye() {
@@ -672,7 +775,7 @@ export function settingsPage({ s, gmail, redirectUri, vendorMapText, projectMapT
 
 <section class="sheet">
   <h2>Sage coding</h2>
-  <p class="help">How extracted lines become Intacct fields. The values shown to begin with are generic starting points for a UK contractor paying subcontractors and suppliers: Sage-style nominal codes and Intacct's standard UK VAT tax detail names. IDs must match what exists in your Intacct company exactly - copy them from the vendor, GL account, project and tax detail lists there, because Intacct rejects a bill whose account, vendor or tax detail it does not know.</p>
+  <p class="help">The company-wide coding. The <a href="/types">Invoice types</a> tab overrides GL accounts, VAT details, location and department per kind of invoice; blanks there fall back to what is here. The values shown to begin with are generic starting points for a UK contractor paying subcontractors and suppliers: Sage-style nominal codes and Intacct's standard UK VAT tax detail names. IDs must match what exists in your Intacct company exactly - copy them from the vendor, GL account, project and tax detail lists there, because Intacct rejects a bill whose account, vendor or tax detail it does not know.</p>
   <div class="field"><label for="sage_location_id">Location ID</label><input id="sage_location_id" name="sage_location_id" type="text" value="${s.sage_location_id}" placeholder="e.g. LON" style="max-width:14rem"><div class="hint">Blank is fine unless the Intacct company runs several locations; a wrong one makes Intacct reject the bill.</div></div>
   <div class="field"><label for="sage_department_id">Department ID</label><input id="sage_department_id" name="sage_department_id" type="text" value="${s.sage_department_id}" placeholder="e.g. MEP" style="max-width:14rem"></div>
   <div class="field"><label for="sage_tax_solution_id">Tax solution</label><input id="sage_tax_solution_id" name="sage_tax_solution_id" type="text" value="${s.sage_tax_solution_id}" style="max-width:20rem"></div>

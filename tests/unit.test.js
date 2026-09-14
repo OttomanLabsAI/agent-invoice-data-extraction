@@ -9,6 +9,7 @@ import { build, billToXml, publicBill, iso, LOG_COLUMNS } from "../src/sage_mapp
 import { retrieve, describe, RAG_MAX_CHARS } from "../src/rag.js";
 import { toCsv } from "../src/csv.js";
 import { parseMap, formatMap, withDefaults, DEFAULTS, DEFAULT_MODEL, CLAUDE_MODELS } from "../src/settings.js";
+import { resolveType, applyTypeDefaults, effectiveCoding, normaliseType, DEFAULT_TYPES } from "../src/invoice_types.js";
 import { FAKE_RECORD } from "../src/fixtures.js";
 import { parseTextJson, emailContext } from "../src/claude.js";
 import { searchLabel, senderAllowed, stripHtml, b64urlDecode } from "../src/gmail.js";
@@ -26,6 +27,7 @@ export const SETTINGS = {
   vendor_map: { "Northbank Mechanical Services Ltd": "V0088" },
   project_map: { HEL18: "P-HEL18" },
   vat_detail_map: { "20": "UK Purchase Goods Standard Rate", "5": "UK Purchase Goods Reduced Rate", "0": "UK Purchase Goods Zero Rate", reverse_charge: "UK Purchase Services Reverse Charge Standard Rate" },
+  invoice_types: DEFAULT_TYPES.map((t) => normaliseType({ ...t, gl_map: {}, vat_detail_map: {} })),
 };
 
 const META = { subject: "Invoice NMS-2026-0417", from: "accounts@northbankmech.co.uk", received_at: "2026-09-13T09:00:00+00:00" };
@@ -70,9 +72,10 @@ test("mapper: the generic defaults map the sample invoice cleanly", () => {
   assert.deepEqual(mapped.issues, [], "no blocking issues with the shipped defaults");
   const bill = mapped.bill;
   assert.equal(bill.VENDORID, "V0088");
-  assert.equal(bill.ITEMS[0].ACCOUNTNO, "6000", "labour goes to direct labour");
-  assert.equal(bill.ITEMS[2].ACCOUNTNO, "5000", "materials go to materials purchased");
-  assert.equal(bill.ITEMS[4].ACCOUNTNO, "7700", "plant hire goes to equipment hire");
+  assert.equal(mapped.invoice_type.id, "subcontractor", "sample is recognised as a subcontractor invoice");
+  assert.ok(bill.ITEMS.slice(0, 5).every((i) => i.ACCOUNTNO === "6002"), "the whole subcontractor invoice goes to the subcontractor account");
+  assert.equal(mapped.entry_sheet.header[1][1], "Subcontractor");
+  assert.equal(mapped.log_row["Invoice type"], "Subcontractor");
   assert.equal(bill.ITEMS.find((i) => i._category === "cis").ACCOUNTNO, "2214");
   assert.equal(bill.ITEMS.find((i) => i._category === "retention").ACCOUNTNO, "2215");
   assert.equal(bill.TERMNAME, "Net 30");
@@ -81,7 +84,7 @@ test("mapper: the generic defaults map the sample invoice cleanly", () => {
 });
 
 test("mapper: unmapped settings surface as issues", () => {
-  const blank = { ...structuredClone(DEFAULTS), gl_map: {}, vendor_map: {}, vat_detail_map: {}, sage_default_gl: "", sage_cis_gl: "", sage_retention_gl: "" };
+  const blank = { ...structuredClone(DEFAULTS), gl_map: {}, vendor_map: {}, vat_detail_map: {}, sage_default_gl: "", sage_cis_gl: "", sage_retention_gl: "", invoice_types: [] };
   const unmapped = build(normalise(FAKE_RECORD), blank, {});
   assert.ok(unmapped.issues.some((i) => i.includes("vendor ID")), "missing vendor flagged when the map is empty");
   assert.ok(unmapped.issues.some((i) => i.includes("GL account")), "missing GL flagged when the map is empty");
@@ -142,7 +145,58 @@ test("rag: short text is sent whole, long text is retrieved by paragraph", () =>
 test("csv: quotes commas, quotes and newlines", () => {
   const csv = toCsv(["A", "B"], [{ A: 'say "hi", ok', B: "line1\nline2" }]);
   assert.equal(csv, 'A,B\r\n"say ""hi"", ok","line1\nline2"\r\n');
-  assert.equal(LOG_COLUMNS.length, 26);
+  assert.equal(LOG_COLUMNS.length, 27);
+});
+
+test("invoice types: matching order", () => {
+  const settings = structuredClone(DEFAULTS);
+  const rec = normalise(FAKE_RECORD);
+  assert.equal(resolveType(rec, settings).type.id, "subcontractor", "CIS / reverse charge signals win");
+  assert.equal(resolveType(rec, settings, { invoice_type: "materials" }).type.id, "materials", "a manual choice wins over everything");
+  const goods = normalise({ supplier: { name: "Kent Building Supplies Ltd" }, line_items: [{ description: "Bricks", net_amount: 500, vat_rate: 20, category: "materials" }, { description: "Delivery", net_amount: 40, vat_rate: 20, category: "expenses" }] });
+  const goodsMatch = resolveType(goods, settings);
+  assert.equal(goodsMatch.type.id, "materials", "lines mostly materials -> materials supplier");
+  assert.ok(goodsMatch.how.includes("mostly materials"));
+  settings.invoice_types[3].suppliers = "Kent Building Supplies";
+  assert.equal(resolveType(goods, settings).type.id, "professional", "a listed supplier wins over the lines");
+  const misc = normalise({ supplier: { name: "Water Co" }, line_items: [{ description: "Water rates", net_amount: 80, vat_rate: 0, category: "other" }] });
+  assert.equal(resolveType(misc, structuredClone(DEFAULTS)).type.id, "overheads", "other -> overheads");
+  assert.equal(resolveType(misc, { invoice_types: [] }).type, null, "no types configured -> none");
+});
+
+test("invoice types: coding overrides, defaults and checks", () => {
+  const settings = structuredClone(DEFAULTS);
+  const coding = effectiveCoding(settings, settings.invoice_types[1]);
+  assert.equal(coding.gl_map.materials, "5000");
+  assert.equal(coding.gl_map.labour, "6000", "blank override falls back to Settings");
+  assert.equal(coding.vat_detail_map["20"], "UK Purchase Goods Standard Rate");
+  assert.equal(effectiveCoding(settings, settings.invoice_types[0]).vat_detail_map["20"], "UK Purchase Services Standard Rate", "subcontractor VAT details are the services ones");
+
+  const silent = normalise({ supplier: { name: "Brickwork Bros" }, vat_treatment: "reverse_charge", line_items: [{ description: "Bricklaying gang", net_amount: 2000, vat_rate: 20, category: "labour" }, { description: "Mortar", net_amount: 300, vat_rate: 20, category: "materials" }] });
+  const { rec: filled, notes } = applyTypeDefaults(silent, settings.invoice_types[0]);
+  assert.equal(filled.cis.deduction_amount, 400, "CIS computed at 20% on the labour lines");
+  assert.equal(filled.cis.labour_amount, 2000);
+  assert.equal(filled.payment_terms_days, 30, "terms default applied");
+  assert.equal(notes.length, 2);
+  assert.ok(filled.flags.some((f) => f.includes("computed at 20%")), "the computation is flagged for the reviewer");
+  assert.deepEqual(applyTypeDefaults(filled, settings.invoice_types[0]).notes, [], "already-filled fields are left alone");
+  const mapped = build(filled, settings, {});
+  assert.ok(mapped.issues.some((i) => i.includes("No Sage project")), "subcontractor without a project is blocked");
+  assert.ok(!mapped.issues.some((i) => i.includes("purchase order")), "subcontractors do not need a PO");
+  assert.ok(mapped.bill.ITEMS.some((i) => i._category === "cis" && i.TRX_AMOUNT === "-400.00"));
+
+  const noPo = normalise({ ...FAKE_RECORD, po_number: null, vat_treatment: "reverse_charge" });
+  const asMaterials = build(noPo, settings, { overrides: { invoice_type: "materials" } });
+  assert.ok(asMaterials.issues.some((i) => i.includes("No purchase order number - Materials supplier invoices need one")), "materials without a PO is blocked");
+  assert.ok(asMaterials.notes.some((n) => n.includes("not usually reverse charged")), "unexpected VAT treatment is noted");
+  assert.equal(asMaterials.entry_sheet.header[1][2], "chosen on the invoice");
+  const standardSub = build(normalise({ ...FAKE_RECORD, vat_treatment: "standard", vat_total: 2529.8, gross_total: 15178.8 }), settings, {});
+  assert.ok(standardSub.notes.some((n) => n.includes("usually fall under the domestic reverse charge")), "subcontractor charging VAT is noted");
+
+  const stored = withDefaults({ invoice_types: [{ id: "x", name: "Old type" }] });
+  assert.equal(stored.invoice_types.length, 1);
+  assert.deepEqual(stored.invoice_types[0].categories, [], "older stored types are filled in with blanks");
+  assert.equal(stored.invoice_types[0].terms_days, null);
 });
 
 test("settings: map parsing and defaults merge", () => {

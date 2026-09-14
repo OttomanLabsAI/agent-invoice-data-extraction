@@ -28,6 +28,8 @@ const ROUTES = [
   ["GET", "/agents/extraction", routes.extractionTab],
   ["POST", "/agents/extraction", routes.extractionSave],
   ["POST", "/agents/extraction/run", routes.extractionRun],
+  ["GET", "/types", routes.typesTab],
+  ["POST", "/types", routes.typesSave],
   ["GET", "/settings", routes.settingsPage],
   ["POST", "/settings", routes.settingsSave],
   ["POST", "/settings/test/claude", routes.testClaude],

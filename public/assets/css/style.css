@@ -271,3 +271,9 @@ img.preview { object-fit: contain; height: auto; max-height: 560px; }
   .tree .edge { left: 0; transform: none; max-width: 100%; }
   .tree .node { width: auto; }
 }
+
+/* ---------- Invoice types */
+.checks { display: flex; flex-wrap: wrap; gap: 0.35rem 1.1rem; }
+.checks label { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--ink-soft); font-size: 0.9rem; white-space: nowrap; }
+.sheet .typehead { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding-bottom: 0.6rem; margin-bottom: 0.9rem; border-bottom: 1px solid var(--rule-strong); }
+.sheet .typehead h2 { padding: 0; margin: 0; border: 0; }
