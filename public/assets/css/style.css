@@ -73,7 +73,7 @@ main::before {
 .btn {
   font: inherit; font-size: 0.92rem; cursor: pointer;
   padding: 0.5rem 0.95rem; border: 1px solid var(--rule-strong); border-radius: 3px;
-  background: var(--sheet); color: var(--ink); text-decoration: none; display: inline-block; line-height: 1.2;
+  background: var(--sheet); color: var(--ink); text-decoration: none; display: inline-block; line-height: 1.2; white-space: nowrap;
 }
 .btn:hover { border-color: var(--ink-soft); }
 .btn:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
@@ -227,3 +227,10 @@ img.preview { object-fit: contain; height: auto; max-height: 560px; }
 @media (prefers-reduced-motion: no-preference) {
   .btn, .tabs button, .topbar nav a { transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease; }
 }
+
+/* ---------- Sign-out sits in the tab row */
+.topbar nav button.linklike {
+  font: inherit; border: 0; background: none; cursor: pointer; margin-left: 1.6rem; padding: 0 0 0.55rem;
+  color: var(--ink-soft); border-bottom: 2px solid transparent;
+}
+.topbar nav button.linklike:hover { color: var(--ink); border-bottom-color: var(--margin); }

@@ -1,12 +1,15 @@
 {
   "name": "agent-invoice-data-extraction",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Website for the Glent Group invoice intake agent, served from public/ on Cloudflare Workers",
+  "type": "module",
+  "description": "Glent Group invoice intake agent: a Cloudflare Worker that reads supplier invoices from Gmail with Claude and prepares Sage Intacct bills",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "wrangler deploy --dry-run"
+    "check": "wrangler deploy --dry-run",
+    "test": "node --test tests/unit.test.js",
+    "smoke": "node tests/smoke.js"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

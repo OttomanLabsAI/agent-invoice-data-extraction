@@ -135,3 +135,36 @@
     });
   });
 })();
+
+// ---- Keep a run going while the agents report more mail waiting
+(function () {
+  "use strict";
+  var STOP_KEY = "invoice-agent-stop-run";
+  document.querySelectorAll("[data-run]").forEach(function (btn) {
+    btn.addEventListener("click", function () { try { sessionStorage.removeItem(STOP_KEY); } catch (e) {} });
+  });
+  var form = document.querySelector("form[data-continue]");
+  if (!form) return;
+  var nudge = document.getElementById("continue-nudge");
+  var stopBtn = form.querySelector("[data-stop]");
+  var countdown = nudge ? nudge.querySelector("[data-countdown]") : null;
+  var stopped = false;
+  try { stopped = sessionStorage.getItem(STOP_KEY) === "1"; } catch (e) {}
+  if (stopped) {
+    if (countdown) countdown.parentNode.textContent = "Stopped. Click Continue now to carry on.";
+    return;
+  }
+  var left = 3;
+  var timer = setInterval(function () {
+    left -= 1;
+    if (countdown) countdown.textContent = String(left);
+    if (left <= 0) { clearInterval(timer); form.submit(); }
+  }, 1000);
+  if (stopBtn) {
+    stopBtn.addEventListener("click", function () {
+      clearInterval(timer);
+      try { sessionStorage.setItem(STOP_KEY, "1"); } catch (e) {}
+      if (countdown) countdown.parentNode.textContent = "Stopped. Click Continue now to carry on.";
+    });
+  }
+})();

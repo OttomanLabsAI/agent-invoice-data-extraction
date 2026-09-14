@@ -1,13 +1,11 @@
-# Local state: keys, OAuth token, database, downloaded invoices
-data/
+# Local tooling and state
+node_modules/
+.wrangler/
+.dev.vars
+.render-check/
+.DS_Store
+*.log
 __pycache__/
 *.pyc
 .venv/
-
-# Website tooling
-node_modules/
-.wrangler/
-.render-check/
-.dev.vars
-.DS_Store
-*.log
+data/

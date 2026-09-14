@@ -1,0 +1,4 @@
+# Copy to .dev.vars for `npm run dev`. Never commit .dev.vars.
+APP_PASSWORD=choose-a-password
+# Set to 1 to run against the fake mailbox and fake Claude answers used by the smoke test.
+# TEST_FIXTURES=1

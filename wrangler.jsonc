@@ -1,13 +1,30 @@
 {
-  // Assets-only Worker: no script, Cloudflare serves public/ directly.
-  // https://developers.cloudflare.com/workers/static-assets/
+  // The invoice intake agent as a Cloudflare Worker: D1 for the database, R2 for
+  // attachments, static assets from public/, a cron trigger for the mailbox sweep.
+  // https://developers.cloudflare.com/workers/
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "agent-invoice-data-extraction",
+  "main": "src/index.js",
   "compatibility_date": "2026-08-01",
   "assets": {
     "directory": "./public",
-    // Serve the themed 404 for unknown paths instead of a bare Cloudflare error.
-    "not_found_handling": "404-page"
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "invoice-agent"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "invoice-agent-files"
+    }
+  ],
+  "triggers": {
+    // Fires every five minutes; the "Automatic checks" setting decides whether a run is due.
+    "crons": ["*/5 * * * *"]
   },
   "observability": {
     "enabled": true
