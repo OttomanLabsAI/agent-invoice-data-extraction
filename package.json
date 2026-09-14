@@ -1,0 +1,14 @@
+{
+  "name": "agent-invoice-data-extraction",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Website for the Glent Group invoice intake agent, served from public/ on Cloudflare Workers",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

@@ -3,3 +3,11 @@ data/
 __pycache__/
 *.pyc
 .venv/
+
+# Website tooling
+node_modules/
+.wrangler/
+.render-check/
+.dev.vars
+.DS_Store
+*.log

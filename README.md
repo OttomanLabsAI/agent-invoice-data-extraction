@@ -15,7 +15,7 @@ Runs locally on one machine at `http://localhost:8765`. Nothing is hosted; keys 
 run.bat           # Windows
 ```
 
-or by hand: `pip install -r requirements.txt` then `python app.py`.
+or by hand: `pip install -r requirements.txt` then `python app.py`. Python 3.11 or newer.
 
 ## Set up (Settings page)
 
@@ -79,9 +79,23 @@ agent/store.py         SQLite (data/invoices.db)
 templates/, static/    the three pages
 samples/               a fictional subcontractor invoice to test with
 tests/smoke_test.py    end-to-end test with the Claude call mocked
+public/                the project website, served by Cloudflare Workers (see Website below)
+wrangler.jsonc         Cloudflare config for it; package.json carries wrangler
 ```
 
 Set `INVOICE_AGENT_DATA=/path` to keep `data/` somewhere else (a synced folder, for example) and `INVOICE_AGENT_PORT` to change the port.
+
+## Website
+
+`public/` is a small static site - the front door for the accounts team: what the agent does, how to get it running, how to set it up, with screenshots of the three pages. Cloudflare Workers serves it as static assets (no build step; nothing outside `public/` is deployed), and every push to `main` deploys it. The app itself is not hosted - it stays on the accounts machine as described above, and the site holds no data.
+
+```bash
+npm install
+npm run dev      # preview at the address wrangler prints
+npm run check    # wrangler deploy --dry-run
+```
+
+The site uses the app's own `static/style.css` (copied to `public/assets/css/style.css`) plus `site.css` for layout. No external resources: fonts fall back to system faces and the screenshots are local files.
 
 ## Things to know
 
