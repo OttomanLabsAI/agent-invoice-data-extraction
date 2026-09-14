@@ -18,10 +18,11 @@
   ],
   "r2_buckets": [
     {
-      // No bucket_name on purpose: wrangler only creates a bucket for a binding that
-      // leaves the name out. The first deploy provisions one called
-      // "agent-invoice-data-extraction-files" and later deploys keep using it.
-      "binding": "FILES"
+      // Create this bucket once in the dashboard (R2 Object Storage -> Create bucket)
+      // before the first deploy. The token Workers Builds deploys with cannot list or
+      // create R2 buckets, so wrangler cannot provision it during the build.
+      "binding": "FILES",
+      "bucket_name": "agent-invoice-data-extraction-files"
     }
   ],
   "triggers": {

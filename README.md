@@ -11,7 +11,7 @@ It runs in the browser at the Worker's address. Everyone on the team signs in wi
 ## Deploy it (once, by whoever looks after Cloudflare)
 
 1. Connect this repository in the Cloudflare dashboard: **Workers & Pages → Create → Import a repository**. Keep the default deploy command (`npx wrangler deploy`). Every push to `main` deploys.
-2. The first deploy creates the D1 database `invoice-agent` and an R2 bucket called `agent-invoice-data-extraction-files` (wrangler names the bucket after the Worker; a bucket named in the config would have to exist already). R2 has to be enabled on the account once: open R2 in the dashboard and accept the terms, then re-run the build if it failed on that. If the build still cannot create them, run `npx wrangler d1 create invoice-agent` and `npx wrangler r2 bucket create agent-invoice-data-extraction-files`, put the printed `database_id` and the `bucket_name` into `wrangler.jsonc`, and push again.
+2. Create the attachment bucket once, by hand: in the dashboard open **R2 Object Storage → Create bucket**, name it exactly `agent-invoice-data-extraction-files`, keep the defaults. The token that Workers Builds deploys with cannot create R2 buckets, so the build fails with "R2 bucket not found" until the bucket exists; then use **Retry build** on the failed deployment or push again. The D1 database `invoice-agent` needs no such step - the first deploy creates it by name.
 3. Open the Worker → **Settings → Variables and Secrets** and add a **secret** named `APP_PASSWORD`. Until it exists the app refuses every visitor and says so.
 4. Open the Worker's address and sign in.
 
