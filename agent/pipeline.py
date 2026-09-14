@@ -108,7 +108,8 @@ def run_once(settings: dict) -> dict:
         query = settings.get("gmail_query") or "has:attachment is:unread"
         label = settings.get("gmail_processed_label") or ""
         if label:
-            query = f"{query} -label:{re.sub(r'[\s/]+', '-', label)}"
+            excluded = re.sub(r"[\s/]+", "-", label)
+            query = f"{query} -label:{excluded}"
         max_messages = int(settings.get("gmail_max_messages") or 10)
         message_ids = gmail_client.list_messages(svc, query, max_messages)
         summary["messages"] = len(message_ids)
