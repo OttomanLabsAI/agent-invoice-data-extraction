@@ -13,6 +13,7 @@ import { describe as ragDescribe } from "./rag.js";
 import { INVOICE_TOOL, LINE_CATEGORIES, DOCUMENT_TYPES, VAT_TREATMENTS } from "./schema.js";
 import * as pipeline from "./pipeline.js";
 import { resolveType, applyTypeDefaults, normaliseType, newTypeId, TYPE_SIGNALS } from "./invoice_types.js";
+import { getFile, deleteFile } from "./files.js";
 import {
   CLAUDE_MODELS, TEXT_FIELDS, INT_FIELDS, formatMap, parseMap, hasClaude, hasGoogleClient, hasSage, saveSettings,
 } from "./settings.js";
@@ -241,7 +242,7 @@ export async function invoiceStatus(ctx) {
   const form = await ctx.request.formData();
   const action = field(form, "action");
   if (action === "delete") {
-    if (invoice.attachment_key) await ctx.env.FILES.delete(invoice.attachment_key).catch(() => {});
+    if (invoice.attachment_key) await deleteFile(ctx.env.DB, invoice.attachment_key);
     await db.deleteInvoice(ctx.env.DB, invoice.id);
     return redirect(ctx, "/", ["ok", "Deleted."]);
   }
@@ -284,12 +285,12 @@ export async function invoicePush(ctx) {
 export async function invoiceFile(ctx) {
   const invoice = await invoiceOr404(ctx);
   if (!invoice || !invoice.attachment_key) return notFound(ctx);
-  const object = await ctx.env.FILES.get(invoice.attachment_key);
-  if (!object) return notFound(ctx);
+  const file = await getFile(ctx.env.DB, invoice.attachment_key);
+  if (!file) return notFound(ctx);
   const name = String(invoice.attachment_name || "attachment").replace(/["\r\n]/g, "");
-  return new Response(object.body, {
+  return new Response(file.bytes, {
     headers: {
-      "content-type": invoice.mime_type || (object.httpMetadata && object.httpMetadata.contentType) || "application/octet-stream",
+      "content-type": invoice.mime_type || file.contentType || "application/octet-stream",
       "content-disposition": `inline; filename="${name}"`,
       "cache-control": "private, no-store",
     },

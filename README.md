@@ -11,7 +11,7 @@ It runs in the browser at the Worker's address. Everyone on the team signs in wi
 ## Deploy it (once, by whoever looks after Cloudflare)
 
 1. Connect this repository in the Cloudflare dashboard: **Workers & Pages → Create → Import a repository**. Keep the default deploy command (`npx wrangler deploy`). Every push to `main` deploys.
-2. Create the attachment bucket once, by hand: in the dashboard open **R2 Object Storage → Create bucket**, name it exactly `agent-invoice-data-extraction-files`, keep the defaults. The token that Workers Builds deploys with cannot create R2 buckets, so the build fails with "R2 bucket not found" until the bucket exists; then use **Retry build** on the failed deployment or push again. The D1 database `invoice-agent` needs no such step - the first deploy creates it by name.
+2. The first deploy creates the D1 database `invoice-agent` by itself; attachments are stored in it too, so there is nothing else to create.
 3. Open the Worker → **Settings → Variables and Secrets** and add a **secret** named `APP_PASSWORD`. Until it exists the app refuses every visitor and says so.
 4. Open the Worker's address and sign in.
 
@@ -103,6 +103,7 @@ src/normalise.js      coerce numbers, recompute totals, check arithmetic
 src/rag.js            reference-text retrieval by paragraph
 src/sage_mapper.js    record → APBILL / APADJUSTMENT payload, XML, entry sheet, log row
 src/sage_client.js    Intacct XML gateway: test connection, create bill
+src/files.js          attachments stored in the database in 512 KB pieces
 src/settings.js       defaults, D1 storage, key=value map parsing, model list
 src/db.js             D1 schema and queries: settings, state, invoices, runs, classifications
 src/auth.js           app password and session cookie
@@ -111,13 +112,13 @@ src/views/            html helpers, layout with the tabs, every page
 public/               assets served as-is: style.css (ledger-paper look), app.js, favicon
 tests/                unit.test.js, smoke.js
 samples/              a fictional subcontractor invoice to test with (make_sample.py regenerates it; Python + reportlab, dev only)
-wrangler.jsonc        Worker, D1, R2, assets and cron configuration
+wrangler.jsonc        Worker, D1, assets and cron configuration
 ```
 
 ## Things to know
 
 - The Intacct field names follow the documented `APBILL` create object (`WHENCREATED`, `WHENDUE`, `VENDORID`, `RECORDID`, `DOCNUMBER`, `TERMNAME`, `TAXSOLUTIONID`, `APBILLITEMS/APBILLITEM` with `ACCOUNTNO`, `TRX_AMOUNT`, `LOCATIONID`, `DEPARTMENTID`, `PROJECTID`, `TAXENTRIES`). Credit notes map to `APADJUSTMENT` with negative amounts. The PO number goes in `DOCNUMBER` (reference); change `build` in `src/sage_mapper.js` if your Intacct uses PO matching through Purchasing instead.
 - The Intacct push has been written against the XML gateway spec but not exercised against a live company - do the first post as *Draft* and compare against a bill keyed by hand.
-- Attachments live in the R2 bucket (`agent-invoice-data-extraction-files`) and extracted data in the D1 database (`invoice-agent`), both inside your Cloudflare account. Delete a row from the Inbox to remove both; the email keeps its labels.
+- Attachments and extracted data both live in the D1 database (`invoice-agent`) inside your Cloudflare account; files are stored in 512 KB pieces. The free plan caps a database at 500 MB, roughly a couple of thousand scanned invoices; Workers Paid raises it to 10 GB. Delete a row from the Inbox to remove its file too; the email keeps its labels.
 - Only PDF, PNG, JPG and WEBP attachments are read; images under 20 KB are treated as logos and skipped.
 - The cron trigger fires every five minutes; the automatic-check interval on the extraction tab decides whether a run is due, so anything under five minutes behaves as five.

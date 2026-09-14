@@ -1,6 +1,7 @@
 {
-  // The invoice intake agent as a Cloudflare Worker: D1 for the database, R2 for
+  // The invoice intake agent as a Cloudflare Worker: D1 for the database and the
   // attachments, static assets from public/, a cron trigger for the mailbox sweep.
+  // The D1 database is created by name on the first deploy; nothing is made by hand.
   // https://developers.cloudflare.com/workers/
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "agent-invoice-data-extraction",
@@ -14,15 +15,6 @@
     {
       "binding": "DB",
       "database_name": "invoice-agent"
-    }
-  ],
-  "r2_buckets": [
-    {
-      // Create this bucket once in the dashboard (R2 Object Storage -> Create bucket)
-      // before the first deploy. The token Workers Builds deploys with cannot list or
-      // create R2 buckets, so wrangler cannot provision it during the build.
-      "binding": "FILES",
-      "bucket_name": "agent-invoice-data-extraction-files"
     }
   ],
   "triggers": {

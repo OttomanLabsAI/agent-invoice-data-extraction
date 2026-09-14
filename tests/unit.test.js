@@ -13,6 +13,7 @@ import { resolveType, applyTypeDefaults, effectiveCoding, normaliseType, DEFAULT
 import { FAKE_RECORD } from "../src/fixtures.js";
 import { parseTextJson, emailContext } from "../src/claude.js";
 import { searchLabel, senderAllowed, stripHtml, b64urlDecode } from "../src/gmail.js";
+import { splitChunks, joinChunks, CHUNK_BYTES } from "../src/files.js";
 
 export const SETTINGS = {
   ...structuredClone(DEFAULTS),
@@ -221,6 +222,19 @@ test("claude helpers: JSON fallback and email context", () => {
   assert.deepEqual(parseTextJson('Here you go: {"a": 2} thanks'), { a: 2 });
   assert.equal(parseTextJson("nothing"), null);
   assert.ok(emailContext({ from: "x@y", subject: "S", body_text: "hello" }).includes("Email body:\nhello"));
+});
+
+test("files: chunking round-trips at every boundary", () => {
+  for (const length of [0, 1, CHUNK_BYTES - 1, CHUNK_BYTES, CHUNK_BYTES + 1, 3 * CHUNK_BYTES + 7]) {
+    const bytes = new Uint8Array(length);
+    for (let i = 0; i < length; i++) bytes[i] = (i * 7) & 0xff;
+    const chunks = splitChunks(bytes);
+    assert.equal(chunks.length, Math.max(1, Math.ceil(length / CHUNK_BYTES)), `chunk count for ${length}`);
+    assert.ok(chunks.every((c) => c.length <= CHUNK_BYTES));
+    const back = joinChunks(chunks.map((c) => c.slice().buffer));
+    assert.equal(back.length, length);
+    assert.ok(back.every((b, i) => b === bytes[i]), `bytes intact for ${length}`);
+  }
 });
 
 test("gmail helpers", () => {

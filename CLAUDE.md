@@ -9,7 +9,7 @@ Cloudflare Worker for Glent Group's accounts team: a Gmail inbox receives suppli
 ```bash
 npm install
 cp .dev.vars.example .dev.vars   # APP_PASSWORD for local dev
-npm run dev                      # wrangler dev on http://localhost:8787, local D1 + R2
+npm run dev                      # wrangler dev on http://localhost:8787, local D1
 npm test                         # node --test tests/unit.test.js
 npm run smoke                    # tests/smoke.js: wrangler dev with TEST_FIXTURES=1, every route over HTTP; must end "All checks passed."
 npm run check                    # wrangler deploy --dry-run
@@ -30,6 +30,7 @@ src/sage_mapper.js    build(record, settings, {emailMeta, overrides}), billToXml
 src/invoice_types.js  DEFAULT_TYPES, normaliseType, resolveType, effectiveCoding, applyTypeDefaults
 src/match.js          norm/lookup/nameListed: the fuzzy supplier matching shared by the maps and the types
 src/sage_client.js    Intacct XML gateway (getAPISession, create), regex-parsed responses
+src/files.js          putFile/getFile/deleteFile: attachments as chunked BLOB rows in the D1 files table
 src/settings.js       DEFAULTS, loadSettings/saveSettings (D1 settings table), parseMap/formatMap, CLAUDE_MODELS
 src/db.js             D1 schema (settings, state, invoices, runs, classifications) and queries; run lock
 src/auth.js           APP_PASSWORD check, HMAC session cookie, same-origin check for posts
@@ -41,10 +42,10 @@ public/               static assets: assets/css/style.css, assets/js/app.js, fav
 tests/unit.test.js    mapper, normalise, rag, csv, settings, helpers
 tests/smoke.js        end-to-end over HTTP against wrangler dev (fixture mode)
 samples/              fictional subcontractor invoice: reverse charge + CIS + retention, project HEL18
-wrangler.jsonc        main src/index.js, assets ./public (binding ASSETS), D1 DB "invoice-agent", R2 FILES "agent-invoice-data-extraction-files" (created by hand once - see below), cron */5
+wrangler.jsonc        main src/index.js, assets ./public (binding ASSETS), D1 DB "invoice-agent" (created by name on deploy), cron */5
 ```
 
-Data flow: `classifyStep` sweeps `gmail_query` minus the three labels, calls `claude.classifyEmail` per email (attachments included, Haiku by default), applies `classify_invoice_label` / `classify_other_label`, records a row in `classifications`. `extractStep` sweeps `label:<invoice label> -label:<processed label>`, calls `claude.extractInvoice` per attachment -> `normalise()` -> `sage_mapper.build()` -> `db.insertInvoice()`, then adds the processed label and marks the email read. Edits on the review page go through `routes.invoiceSave` -> `pipeline.remap()`, which reruns `build` only. Attachments are R2 objects under `attachments/<message id or upload-ts>_<name>`; the row keeps `attachment_key`.
+Data flow: `classifyStep` sweeps `gmail_query` minus the three labels, calls `claude.classifyEmail` per email (attachments included, Haiku by default), applies `classify_invoice_label` / `classify_other_label`, records a row in `classifications`. `extractStep` sweeps `label:<invoice label> -label:<processed label>`, calls `claude.extractInvoice` per attachment -> `normalise()` -> `sage_mapper.build()` -> `db.insertInvoice()`, then adds the processed label and marks the email read. Edits on the review page go through `routes.invoiceSave` -> `pipeline.remap()`, which reruns `build` only. Attachments are rows in the `files` table keyed `attachments/<message id or upload-ts>_<name>` in 512 KB chunks (`files.js`); the invoice row keeps `attachment_key`.
 
 Invoice statuses: `review` -> `approved` -> `posted`; side states `queried`, `not_invoice`, `error`. Approve is refused while `issues` is non-empty.
 
@@ -63,7 +64,7 @@ Invoice statuses: `review` -> `approved` -> `posted`; side states `queried`, `no
 - **Fixture mode** (`TEST_FIXTURES=1`) swaps `claude.js` and `gmail.js` for `fixtures.js`: three emails (invoice, statement, no attachment), canned record, label state kept in the `fixture_mailbox` state row. Only `wrangler dev --var` sets it.
 - **Assets** are cached immutably for a year; bump `ASSET_VERSION` in `views/layout.js` whenever `style.css` or `app.js` change.
 - **D1:** create tables with `db.batch` of single statements (`ensureSchema`), not `exec` - `exec` splits on newlines.
-- **Provisioning on deploy:** wrangler creates the D1 database by name (`database_name` without `database_id`) because the Workers Builds token can read D1. It cannot list or create R2 buckets: a nameless R2 binding is silently skipped and uploaded as "inherit", which the API refuses when no earlier version had the binding (`inherit binding 'FILES' is invalid`), and a named bucket must already exist or the API refuses with `R2 bucket not found`. So the bucket `agent-invoice-data-extraction-files` is created once by hand in the dashboard and named in the config. Do not go back to a nameless binding.
+- **Provisioning on deploy:** wrangler creates the D1 database by name (`database_name` without `database_id`) because the Workers Builds token can read D1. That token cannot list or create R2 buckets: a nameless R2 binding is silently skipped and uploaded as "inherit", which the API refuses when no earlier version had the binding, and a named bucket must already exist or the API refuses with `R2 bucket not found`. That is why attachments live in D1 (v2.7). Do not add an R2 binding back unless the bucket has been created by hand first. D1 rows are capped at 2 MB, hence the 512 KB chunks.
 
 ## Bugs already fixed - do not reintroduce
 
@@ -77,7 +78,7 @@ Invoice statuses: `review` -> `approved` -> `posted`; side states `queried`, `no
 
 Working and checked: unit tests and the HTTP smoke test green, the whole app clicked through in headless Chromium against `wrangler dev` (sign-in, inbox, both agent tabs with a run each, review page, settings), `wrangler deploy --dry-run` clean.
 
-Not yet exercised end to end: the deploy on the owner's Cloudflare account (the D1 database provisions by name; the R2 bucket must be created by hand first, which was the pending step at handover), Gmail OAuth with a Web-application client on the deployed host, Claude extraction on a real invoice (fixture-only in tests - run the sample PDF through *Process upload* with a live key first), and the Intacct push - written to the XML gateway spec, never sent to a live company. First real post should be `Draft`, compared against a hand-keyed bill; expect to adjust `TAXSOLUTIONID` / tax detail names / whether PO matching should go through Purchasing rather than `DOCNUMBER`.
+Not yet exercised end to end: the deploy on the owner's Cloudflare account (the D1 database provisions by name; nothing else is needed since attachments moved into D1), Gmail OAuth with a Web-application client on the deployed host, Claude extraction on a real invoice (fixture-only in tests - run the sample PDF through *Process upload* with a live key first), and the Intacct push - written to the XML gateway spec, never sent to a live company. First real post should be `Draft`, compared against a hand-keyed bill; expect to adjust `TAXSOLUTIONID` / tax detail names / whether PO matching should go through Purchasing rather than `DOCNUMBER`.
 
 Invoice types default to five generic kinds (Subcontractor, Materials supplier, Plant hire, Professional services, Overheads) with generic overrides; the sample invoice resolves to Subcontractor by its CIS / reverse-charge signals and codes wholly to 6002. Sage coding defaults are generic (`settings.DEFAULTS` + `GENERIC_CODES`): Sage-style nominal codes per category, 2214/2215 for CIS and retention, Intacct's standard UK VAT detail names, terms 0-90 days, and the sample invoice's supplier `V0088` / project `P-HEL18` so the sample maps end to end. Location and department stay blank. Real IDs come from Glent's Intacct lists and must replace these before the first Draft post.
 
@@ -109,3 +110,4 @@ Invoice types default to five generic kinds (Subcontractor, Materials supplier, 
 | v2.4 | 14 Sep 2026 | Invoice types: five generic kinds of invoice, each with its own GL and VAT overrides, CIS and retention defaults, terms and PO / project checks, matched automatically and changeable on the review page. |
 | v2.5 | 14 Sep 2026 | Deploy fix: the R2 binding no longer names its bucket, so wrangler creates one on the first deploy instead of failing on a bucket that does not exist. |
 | v2.6 | 14 Sep 2026 | Deploy fix, second round: the build token cannot create R2 buckets, so the bucket is created once by hand and named in the config again. |
+| v2.7 | 14 Sep 2026 | Attachments move into the D1 database in 512 KB pieces and the R2 bucket is gone, so a deploy creates everything it needs by itself. |

@@ -5,6 +5,7 @@ import { extractInvoice, classifyEmail } from "./claude.js";
 import * as gmail from "./gmail.js";
 import { build } from "./sage_mapper.js";
 import { resolveType, applyTypeDefaults } from "./invoice_types.js";
+import { putFile } from "./files.js";
 import { hasClaude, DEFAULT_MODEL } from "./settings.js";
 
 const safeName = (name) => String(name || "attachment").replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
@@ -16,7 +17,7 @@ export const EXTRACT_BATCH = 1;
 export async function processAttachment(env, settings, { data, filename, mimeType, emailMeta, source = "gmail" }) {
   const meta = { ...(emailMeta || {}), attachment_name: filename };
   const key = `attachments/${meta.id || "upload-" + Date.now()}_${safeName(filename)}`;
-  await env.FILES.put(key, data, { httpMetadata: { contentType: mimeType } });
+  await putFile(env.DB, key, data, mimeType);
 
   const base = {
     source,

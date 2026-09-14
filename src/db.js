@@ -45,6 +45,14 @@ const SCHEMA = [
     summary TEXT,
     ok INTEGER DEFAULT 1
   )`,
+  `CREATE TABLE IF NOT EXISTS files (
+    key TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    content_type TEXT,
+    size INTEGER,
+    data BLOB,
+    PRIMARY KEY (key, seq)
+  )`,
   `CREATE TABLE IF NOT EXISTS classifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,

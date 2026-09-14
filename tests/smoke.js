@@ -185,7 +185,7 @@ async function run() {
   page = await req("/invoice/1/sage.json");
   check(JSON.parse(page.text).APBILL.RECORDID === "NMS-2026-0417", "JSON download has the bill");
   page = await req("/invoice/1/file");
-  check(page.status === 200 && page.text.startsWith("%PDF") && page.headers.get("content-type").startsWith("application/pdf"), "attachment served from R2 for the preview");
+  check(page.status === 200 && page.text.startsWith("%PDF") && page.headers.get("content-type").startsWith("application/pdf"), "attachment served from the database for the preview");
   page = await req("/export.csv");
   check(page.status === 200 && page.text.includes("NMS-2026-0417") && page.text.includes("Sage vendor ID") && page.text.includes("Needs review"), "CSV export has the log row");
 
@@ -267,6 +267,20 @@ async function run() {
   bad.append("files", new Blob([Buffer.from("hello")], { type: "text/plain" }), "notes.txt");
   page = await req("/upload", { method: "POST", body: bad });
   check(page.text.includes("only PDF, PNG, JPG and WEBP are supported"), "unsupported upload is refused");
+  const big = new Uint8Array(2_500_000);
+  big.set(new TextEncoder().encode("%PDF-1.4 big"), 0);
+  for (let i = 16; i < big.length; i++) big[i] = (i * 31) & 0xff;
+  const bigForm = new FormData();
+  bigForm.append("files", new Blob([big], { type: "application/pdf" }), "big-invoice.pdf");
+  page = await req("/upload", { method: "POST", body: bigForm });
+  const bigId = (page.text.match(/<a href="\/invoice\/(\d+)">[^<]*<\/a><span class="sub">big-invoice\.pdf<\/span>/) || [])[1];
+  check(page.text.includes("Processed 1 file(s).") && Boolean(bigId), "a multi-megabyte upload is stored in chunks");
+  const rawFile = await fetch(`${BASE}/invoice/${bigId}/file`, { headers: { cookie: cookieHeader() } });
+  const got = new Uint8Array(await rawFile.arrayBuffer());
+  check(rawFile.status === 200 && got.length === big.length && got.every((b, i) => b === big[i]), "the stored file comes back byte for byte");
+  page = await req(`/invoice/${bigId}/status`, { method: "POST", form: { action: "delete" } });
+  const gone = await fetch(`${BASE}/invoice/${bigId}/file`, { headers: { cookie: cookieHeader() } });
+  check(gone.status === 404, "deleting the invoice removes its file");
   page = await req("/?status=error");
   check(page.text.includes("broken.pdf") && !page.text.includes("NMS-2026-0417"), "status filter works");
   page = await req("/invoice/3/status", { method: "POST", form: { action: "delete" } });
