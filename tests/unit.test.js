@@ -8,7 +8,7 @@ import { normalise } from "../src/normalise.js";
 import { build, billToXml, publicBill, iso, LOG_COLUMNS } from "../src/sage_mapper.js";
 import { retrieve, describe, RAG_MAX_CHARS } from "../src/rag.js";
 import { toCsv } from "../src/csv.js";
-import { parseMap, formatMap, withDefaults, DEFAULTS } from "../src/settings.js";
+import { parseMap, formatMap, withDefaults, DEFAULTS, DEFAULT_MODEL, CLAUDE_MODELS } from "../src/settings.js";
 import { FAKE_RECORD } from "../src/fixtures.js";
 import { parseTextJson, emailContext } from "../src/claude.js";
 import { searchLabel, senderAllowed, stripHtml, b64urlDecode } from "../src/gmail.js";
@@ -140,6 +140,10 @@ test("settings: map parsing and defaults merge", () => {
   assert.equal(merged.gl_map.materials, "");
   assert.equal(merged.classify_model, "claude-opus-5");
   assert.ok(!("unknown_key" in merged));
+  assert.equal(DEFAULT_MODEL, "claude-opus-5");
+  assert.equal(DEFAULTS.classify_model, "claude-opus-5");
+  assert.equal(DEFAULTS.extract_model, "claude-opus-5");
+  assert.equal(CLAUDE_MODELS[0][0], "claude-opus-5", "Opus 5 is first in the model list");
 });
 
 test("claude helpers: JSON fallback and email context", () => {

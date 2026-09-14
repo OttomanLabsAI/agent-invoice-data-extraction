@@ -4,7 +4,7 @@ import * as db from "./db.js";
 import { extractInvoice, classifyEmail } from "./claude.js";
 import * as gmail from "./gmail.js";
 import { build } from "./sage_mapper.js";
-import { hasClaude } from "./settings.js";
+import { hasClaude, DEFAULT_MODEL } from "./settings.js";
 
 const safeName = (name) => String(name || "attachment").replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
 
@@ -34,7 +34,7 @@ export async function processAttachment(env, settings, { data, filename, mimeTyp
   try {
     ({ record: extracted, usage } = await extractInvoice(env, {
       apiKey: settings.anthropic_api_key,
-      model: settings.extract_model || "claude-sonnet-5",
+      model: settings.extract_model || DEFAULT_MODEL,
       attachment: data,
       mimeType,
       companyName: settings.company_name || "Glent Group",
@@ -134,7 +134,7 @@ export async function classifyStep(env, settings, limit = CLASSIFY_BATCH) {
       try {
         result = await classifyEmail(env, {
           apiKey: settings.anthropic_api_key,
-          model: settings.classify_model || "claude-haiku-4-5-20251001",
+          model: settings.classify_model || DEFAULT_MODEL,
           emailMeta: meta,
           attachments: meta.attachments,
           companyName: settings.company_name || "Glent Group",

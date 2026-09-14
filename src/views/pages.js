@@ -329,7 +329,7 @@ export function classificationPage({ s, models, connected, claudeReady, recent, 
 <form id="classification-form" method="post" action="/agents/classification" autocomplete="off">
 <section class="sheet">
   <h2>AI model</h2>
-  <p class="help">Classification is a short call per email, so the cheapest model is usually right. The key comes from Settings.</p>
+  <p class="help">Opus 5 is the default. Classification is a short call per email, so Sonnet 5 or Haiku 4.5 will do it for less if volume gets high. The key comes from Settings.</p>
   <div class="field"><label for="classify_model">Model</label>${modelSelect("classify_model", s.classify_model, models)}</div>
 </section>
 
@@ -430,7 +430,7 @@ export function extractionPage({ s, models, connected, claudeReady, lastRun, rag
 <form id="extraction-form" method="post" action="/agents/extraction" autocomplete="off">
 <section class="sheet">
   <h2>AI model</h2>
-  <p class="help">Reads the whole document, so this is where model quality matters. Sonnet 5 is the default and is plenty for invoices; Haiku 4.5 is cheaper if volume gets high. The key comes from Settings.</p>
+  <p class="help">Reads the whole document, so this is where model quality matters. Opus 5 is the default; Sonnet 5 is faster and cheaper and still plenty for most invoices. The key comes from Settings.</p>
   <div class="field"><label for="extract_model">Model</label>${modelSelect("extract_model", s.extract_model, models)}</div>
 </section>
 

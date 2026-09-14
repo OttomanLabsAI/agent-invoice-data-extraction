@@ -2,11 +2,13 @@
 // "key = value" map parsing used by the Sage coding fields.
 
 export const CLAUDE_MODELS = [
-  ["claude-sonnet-5", "Claude Sonnet 5 (recommended for extraction)"],
-  ["claude-opus-5", "Claude Opus 5"],
+  ["claude-opus-5", "Claude Opus 5 (default)"],
+  ["claude-sonnet-5", "Claude Sonnet 5 (faster, cheaper)"],
   ["claude-fable-5-1", "Claude Fable 5.1"],
-  ["claude-haiku-4-5-20251001", "Claude Haiku 4.5 (cheapest, fine for classification)"],
+  ["claude-haiku-4-5-20251001", "Claude Haiku 4.5 (cheapest)"],
 ];
+
+export const DEFAULT_MODEL = "claude-opus-5";
 
 export const SECRET_FIELDS = new Set([
   "anthropic_api_key", "google_client_id", "google_client_secret",
@@ -32,7 +34,7 @@ export const DEFAULTS = {
   // Claude
   anthropic_api_key: "",
   // Agent - Classification: reads new mail and labels invoices
-  classify_model: "claude-haiku-4-5-20251001",
+  classify_model: DEFAULT_MODEL,
   classify_reference_text: "",
   classify_invoice_label: "Invoice Incoming",
   classify_other_label: "Not an invoice",
@@ -40,7 +42,7 @@ export const DEFAULTS = {
   gmail_allowed_senders: "",
   gmail_max_messages: 10,
   // Agent - Invoice Extraction: reads mail labelled as invoices and extracts the data
-  extract_model: "claude-sonnet-5",
+  extract_model: DEFAULT_MODEL,
   extract_reference_text: "",
   gmail_processed_label: "Invoices/Processed",
   poll_minutes: 0,
