@@ -1,7 +1,7 @@
 import { html, raw, when, selected, checked, disabled, money, shortDate, timeOf, fmt2, plain, humanise, esc } from "./html.js";
 import { continueNudge } from "./layout.js";
 import { STATUSES, STATUS_LABELS } from "../db.js";
-import { modelLabel } from "../settings.js";
+import { modelLabel, GENERIC_CODES } from "../settings.js";
 
 // --------------------------------------------------------------------------- Sign-in and setup
 
@@ -672,9 +672,9 @@ export function settingsPage({ s, gmail, redirectUri, vendorMapText, projectMapT
 
 <section class="sheet">
   <h2>Sage coding</h2>
-  <p class="help">How extracted lines become Intacct fields. IDs must match what exists in your Intacct company exactly - copy them from the vendor, GL account, project and tax detail lists there.</p>
-  <div class="field"><label for="sage_location_id">Location ID</label><input id="sage_location_id" name="sage_location_id" type="text" value="${s.sage_location_id}" style="max-width:14rem"></div>
-  <div class="field"><label for="sage_department_id">Department ID</label><input id="sage_department_id" name="sage_department_id" type="text" value="${s.sage_department_id}" style="max-width:14rem"></div>
+  <p class="help">How extracted lines become Intacct fields. The values shown to begin with are generic starting points for a UK contractor paying subcontractors and suppliers: Sage-style nominal codes and Intacct's standard UK VAT tax detail names. IDs must match what exists in your Intacct company exactly - copy them from the vendor, GL account, project and tax detail lists there, because Intacct rejects a bill whose account, vendor or tax detail it does not know.</p>
+  <div class="field"><label for="sage_location_id">Location ID</label><input id="sage_location_id" name="sage_location_id" type="text" value="${s.sage_location_id}" placeholder="e.g. LON" style="max-width:14rem"><div class="hint">Blank is fine unless the Intacct company runs several locations; a wrong one makes Intacct reject the bill.</div></div>
+  <div class="field"><label for="sage_department_id">Department ID</label><input id="sage_department_id" name="sage_department_id" type="text" value="${s.sage_department_id}" placeholder="e.g. MEP" style="max-width:14rem"></div>
   <div class="field"><label for="sage_tax_solution_id">Tax solution</label><input id="sage_tax_solution_id" name="sage_tax_solution_id" type="text" value="${s.sage_tax_solution_id}" style="max-width:20rem"></div>
 
   <div class="field">
@@ -688,7 +688,7 @@ export function settingsPage({ s, gmail, redirectUri, vendorMapText, projectMapT
         <div>${smallLabel("sage_cis_gl", "CIS control")}<input id="sage_cis_gl" name="sage_cis_gl" type="text" value="${s.sage_cis_gl}"></div>
         <div>${smallLabel("sage_retention_gl", "retention control")}<input id="sage_retention_gl" name="sage_retention_gl" type="text" value="${s.sage_retention_gl}"></div>
       </div>
-      <div class="hint">CIS deductions and retentions are added as negative lines to the control accounts when set; otherwise they are flagged for manual posting.</div>
+      <div class="hint">CIS deductions and retentions are added as negative lines to the control accounts when set; otherwise they are flagged for manual posting. Generic codes: ${GENERIC_CODES.map(([code, meaning]) => `${code} ${meaning}`).join(" · ")}.</div>
     </div>
   </div>
 
@@ -712,12 +712,12 @@ export function settingsPage({ s, gmail, redirectUri, vendorMapText, projectMapT
   <div class="field">
     <label for="vendor_map">Vendor map<small>supplier name = vendor ID</small></label>
     <textarea id="vendor_map" name="vendor_map" placeholder="Kingspan Insulation Ltd = V0042&#10;Speedy Hire = V0117">${vendorMapText}</textarea>
-    <div class="hint">Matching ignores case, punctuation and Ltd/Limited/PLC. Anything unmatched is flagged on the invoice, where you can type the ID directly.</div>
+    <div class="hint">Matching ignores case, punctuation and Ltd/Limited/PLC. Anything unmatched is flagged on the invoice, where you can type the ID directly. The entry shown to begin with is the fictional supplier on the sample invoice - remove it once real suppliers are in.</div>
   </div>
   <div class="field">
     <label for="project_map">Project map<small>site or PO prefix = project ID</small></label>
     <textarea id="project_map" name="project_map" placeholder="HEL18 = P-HEL18&#10;AMS01 = P-AMS01">${projectMapText}</textarea>
-    <div class="hint">Matched against the project reference, PO number, site address and email subject.</div>
+    <div class="hint">Matched against the project reference, PO number, site address and email subject. HEL18 is the fictional project on the sample invoice.</div>
   </div>
 </section>
 

@@ -44,6 +44,8 @@ Every key field is masked; the eye button reveals it so you can check a paste. K
 | CIS / retention control | deductions become negative lines to these accounts |
 | Location / department | stamped on every line |
 
+The maps come pre-filled with generic starting points for a UK contractor paying subcontractors and suppliers: Sage-style nominal codes (5000 materials, 6000 direct labour, 6002 subcontractors, 7700 plant hire, 7603 professional services, 7400 travel and subsistence, 5002 miscellaneous as the fallback, 2214 CIS deductions withheld, 2215 retentions held), Intacct's standard UK VAT tax detail names, payment terms from due-on-receipt to 90 days, and the fictional supplier and project from the sample invoice. Replace them with the IDs from Glent's own Intacct lists before the first real post - Intacct rejects a bill whose account, vendor or tax detail it does not know. Location and department are left blank, which posts without those dimensions.
+
 Anything that cannot be mapped is listed as a check on the invoice and blocks *Approve* until you fill it in (you can type a vendor or project ID straight on the invoice).
 
 ## The two agents

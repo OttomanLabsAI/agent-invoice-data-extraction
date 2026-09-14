@@ -65,8 +65,24 @@ test("mapper: XML gateway payload", () => {
   assert.ok(!("_object" in json.APBILL), "helper keys stripped from the public payload");
 });
 
+test("mapper: the generic defaults map the sample invoice cleanly", () => {
+  const mapped = build(normalise(FAKE_RECORD), structuredClone(DEFAULTS), { emailMeta: META });
+  assert.deepEqual(mapped.issues, [], "no blocking issues with the shipped defaults");
+  const bill = mapped.bill;
+  assert.equal(bill.VENDORID, "V0088");
+  assert.equal(bill.ITEMS[0].ACCOUNTNO, "6000", "labour goes to direct labour");
+  assert.equal(bill.ITEMS[2].ACCOUNTNO, "5000", "materials go to materials purchased");
+  assert.equal(bill.ITEMS[4].ACCOUNTNO, "7700", "plant hire goes to equipment hire");
+  assert.equal(bill.ITEMS.find((i) => i._category === "cis").ACCOUNTNO, "2214");
+  assert.equal(bill.ITEMS.find((i) => i._category === "retention").ACCOUNTNO, "2215");
+  assert.equal(bill.TERMNAME, "Net 30");
+  assert.equal(bill.ITEMS[0].TAXENTRIES[0].DETAILID, "UK Purchase Services Reverse Charge Standard Rate");
+  assert.equal(DEFAULTS.terms_map["45"], "Net 45");
+});
+
 test("mapper: unmapped settings surface as issues", () => {
-  const unmapped = build(normalise(FAKE_RECORD), structuredClone(DEFAULTS), {});
+  const blank = { ...structuredClone(DEFAULTS), gl_map: {}, vendor_map: {}, vat_detail_map: {}, sage_default_gl: "", sage_cis_gl: "", sage_retention_gl: "" };
+  const unmapped = build(normalise(FAKE_RECORD), blank, {});
   assert.ok(unmapped.issues.some((i) => i.includes("vendor ID")), "missing vendor flagged when the map is empty");
   assert.ok(unmapped.issues.some((i) => i.includes("GL account")), "missing GL flagged when the map is empty");
   assert.ok(unmapped.issues.some((i) => i.includes("CIS control")), "CIS without a control account is an issue");
@@ -137,7 +153,7 @@ test("settings: map parsing and defaults merge", () => {
   assert.equal(formatMap({ "30": "Net 30" }), "30 = Net 30");
   const merged = withDefaults({ gl_map: { labour: "5200" }, unknown_key: "x", classify_model: "claude-opus-5" });
   assert.equal(merged.gl_map.labour, "5200");
-  assert.equal(merged.gl_map.materials, "");
+  assert.equal(merged.gl_map.materials, "5000", "unmentioned map keys keep their generic default");
   assert.equal(merged.classify_model, "claude-opus-5");
   assert.ok(!("unknown_key" in merged));
   assert.equal(DEFAULT_MODEL, "claude-opus-5");

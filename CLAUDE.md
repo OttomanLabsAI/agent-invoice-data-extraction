@@ -75,7 +75,7 @@ Working and checked: unit tests and the HTTP smoke test green, the whole app cli
 
 Not yet exercised: a real deploy on the owner's Cloudflare account (first deploy provisions the D1 database and R2 bucket by name; if that fails, create them and set `database_id`), Gmail OAuth with a Web-application client on the deployed host, Claude extraction on a real invoice (fixture-only in tests - run the sample PDF through *Process upload* with a live key first), and the Intacct push - written to the XML gateway spec, never sent to a live company. First real post should be `Draft`, compared against a hand-keyed bill; expect to adjust `TAXSOLUTIONID` / tax detail names / whether PO matching should go through Purchasing rather than `DOCNUMBER`.
 
-Settings defaults are placeholders (`LON`/`MEP`, vendor map empty). Real IDs come from Glent's Intacct lists.
+Sage coding defaults are generic (`settings.DEFAULTS` + `GENERIC_CODES`): Sage-style nominal codes per category, 2214/2215 for CIS and retention, Intacct's standard UK VAT detail names, terms 0-90 days, and the sample invoice's supplier `V0088` / project `P-HEL18` so the sample maps end to end. Location and department stay blank. Real IDs come from Glent's Intacct lists and must replace these before the first Draft post.
 
 ## Next steps, in rough order
 
@@ -101,3 +101,4 @@ Settings defaults are placeholders (`LON`/`MEP`, vendor map empty). Real IDs com
 | v2.0 | 14 Sep 2026 | Ground-up rebuild as a Cloudflare Worker that runs in the browser: D1 + R2 storage, app-password sign-in, and two agent tabs - Classification labels invoices in the mailbox, Invoice Extraction reads them - each with its own model and reference text. |
 | v2.1 | 14 Sep 2026 | Claude Opus 5 is the default model for both agents. |
 | v2.2 | 14 Sep 2026 | Agent tree tab: a clickable map of the mailbox, the two agents, the Inbox and Sage, with each box showing its model, last run and counts. |
+| v2.3 | 14 Sep 2026 | Sage coding pre-filled with generic contractor defaults: nominal codes per category, CIS and retention accounts, UK VAT detail names, payment terms, and the sample supplier and project. |
