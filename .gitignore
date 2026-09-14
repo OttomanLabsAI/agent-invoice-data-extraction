@@ -1,0 +1,5 @@
+# Local state: keys, OAuth token, database, downloaded invoices
+data/
+__pycache__/
+*.pyc
+.venv/

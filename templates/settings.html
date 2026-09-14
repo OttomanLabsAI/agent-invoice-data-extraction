@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+
+{% macro eye() -%}
+<svg class="eye-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+<svg class="eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 10.6a3 3 0 0 0 4.2 4.2"/><path d="M9.9 5.1A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1"/><path d="M6.6 6.6C3.9 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 4.4-1"/></svg>
+{%- endmacro %}
+
+{% macro secret(id, label, value, hint='', placeholder='', small='') %}
+<div class="field">
+  <label for="{{ id }}">{{ label }}{% if small %}<small>{{ small }}</small>{% endif %}</label>
+  <div class="secret">
+    <input id="{{ id }}" name="{{ id }}" type="password" value="{{ value }}" autocomplete="new-password" spellcheck="false" placeholder="{{ placeholder }}">
+    <button type="button" class="reveal" aria-label="Show" title="Show">{{ eye() }}</button>
+  </div>
+  {% if hint %}<div class="hint">{{ hint }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+<div class="pagehead">
+  <div>
+    <h1>Settings</h1>
+    <div class="meta">Keys are stored in <code>data/settings.json</code> on this machine only. Paste, reveal to check, save.</div>
+  </div>
+  <div class="actions"><button class="btn primary" type="submit" form="settings-form">Save settings</button></div>
+</div>
+
+<form id="settings-form" method="post" action="{{ url_for('settings_page') }}" autocomplete="off">
+
+<section class="sheet">
+  <h2>Claude</h2>
+  <p class="help">Reads each invoice and fills in the fields. Get a key from the Claude Console; usage is billed per document (a typical two-page invoice is a few thousand tokens).</p>
+  {{ secret('anthropic_api_key', 'API key', s.anthropic_api_key, placeholder='sk-ant-…') }}
+  <div class="field">
+    <label for="claude_model">Model</label>
+    <select id="claude_model" name="claude_model">
+      {% for value, label in models %}<option value="{{ value }}" {{ 'selected' if s.claude_model == value }}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label></label>
+    <div><button type="button" class="btn small" id="test-claude">Test key</button><div class="test-result" id="test-claude-result"></div></div>
+  </div>
+</section>
+
+<section class="sheet">
+  <h2>Gmail</h2>
+  <p class="help">
+    In Google Cloud Console create a project, enable the <strong>Gmail API</strong>, then under <em>APIs &amp; Services › Credentials</em> create an <strong>OAuth client ID</strong> of type <strong>Desktop app</strong>. Paste its client ID and secret here, save, then connect. If you choose <em>Web application</em> instead, add <code>{{ redirect_uri }}</code> as an authorised redirect URI. While the consent screen is in testing mode, add the mailbox as a test user.
+  </p>
+  {{ secret('google_client_id', 'OAuth client ID', s.google_client_id, placeholder='…apps.googleusercontent.com') }}
+  {{ secret('google_client_secret', 'OAuth client secret', s.google_client_secret, placeholder='GOCSPX-…') }}
+  <div class="field">
+    <label>Connection</label>
+    <div>
+      {% if gmail.connected %}
+        <span class="connected">Connected</span> as {{ gmail.email }}
+        <button class="btn small quiet" type="submit" formaction="{{ url_for('gmail_disconnect') }}" formmethod="post" formnovalidate>Disconnect</button>
+      {% elif gmail.error %}
+        <span class="disconnected">Token problem</span> — {{ gmail.error }}
+        <button class="btn small" type="submit" name="action" value="connect_gmail" formnovalidate>Reconnect Gmail</button>
+      {% else %}
+        <span class="disconnected">Not connected</span>
+        <button class="btn small" type="submit" name="action" value="connect_gmail" formnovalidate>Connect Gmail</button>
+        <div class="hint">Saves everything on this page, then opens Google's sign-in for the invoices mailbox.</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="field">
+    <label for="gmail_query">Search</label>
+    <input id="gmail_query" name="gmail_query" type="text" value="{{ s.gmail_query }}">
+    <div class="hint">Gmail search syntax. Processed mail is excluded automatically by the label below. Example: <code>has:attachment is:unread label:Invoices</code></div>
+  </div>
+  <div class="field">
+    <label for="gmail_allowed_senders">Only from<small>optional</small></label>
+    <input id="gmail_allowed_senders" name="gmail_allowed_senders" type="text" value="{{ s.gmail_allowed_senders }}" placeholder="@supplier.co.uk, accounts@another.com">
+    <div class="hint">Comma-separated addresses or domains. Blank means any sender.</div>
+  </div>
+  <div class="field">
+    <label for="gmail_processed_label">Processed label</label>
+    <input id="gmail_processed_label" name="gmail_processed_label" type="text" value="{{ s.gmail_processed_label }}">
+    <div class="hint">Added to each email after it is read, so it is never picked up twice. Created if it does not exist.</div>
+  </div>
+  <div class="field">
+    <label>Per run</label>
+    <div class="row">
+      <div><input id="gmail_max_messages" name="gmail_max_messages" type="number" min="1" max="100" value="{{ s.gmail_max_messages }}"><div class="hint">emails per check</div></div>
+      <div><input id="poll_minutes" name="poll_minutes" type="number" min="0" max="1440" value="{{ s.poll_minutes }}"><div class="hint">minutes between automatic checks (0 = only when you click)</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="sheet">
+  <h2>Company</h2>
+  <div class="field"><label for="company_name">Company name</label><input id="company_name" name="company_name" type="text" value="{{ s.company_name }}"></div>
+  <div class="field"><label for="default_currency">Base currency</label><input id="default_currency" name="default_currency" type="text" value="{{ s.default_currency }}" style="max-width:8rem"></div>
+</section>
+
+<section class="sheet">
+  <h2>Sage Intacct connection</h2>
+  <p class="help">Optional. With these filled in, an approved invoice can be posted straight into Intacct as an AP bill. Without them the app still gives you the bill ready to key in, plus JSON/XML/CSV downloads. Web Services must be enabled on the Intacct company and the sender ID authorised for it.</p>
+  <div class="field"><label for="sage_endpoint">Endpoint</label><input id="sage_endpoint" name="sage_endpoint" type="text" value="{{ s.sage_endpoint }}"></div>
+  {{ secret('sage_sender_id', 'Web services sender ID', s.sage_sender_id) }}
+  {{ secret('sage_sender_password', 'Web services password', s.sage_sender_password) }}
+  {{ secret('sage_company_id', 'Company ID', s.sage_company_id) }}
+  {{ secret('sage_user_id', 'User ID', s.sage_user_id, hint='A dedicated Web Services user is best, so posts show under a recognisable name.') }}
+  {{ secret('sage_user_password', 'User password', s.sage_user_password) }}
+  <div class="field">
+    <label for="sage_action">Create bills as</label>
+    <select id="sage_action" name="sage_action" style="max-width:14rem">
+      <option value="Draft" {{ 'selected' if s.sage_action == 'Draft' }}>Draft (review inside Intacct)</option>
+      <option value="Submit" {{ 'selected' if s.sage_action == 'Submit' }}>Submit (post immediately)</option>
+    </select>
+  </div>
+  <div class="field">
+    <label></label>
+    <div><button type="button" class="btn small" id="test-sage">Test connection</button><div class="test-result" id="test-sage-result"></div></div>
+  </div>
+</section>
+
+<section class="sheet">
+  <h2>Sage coding</h2>
+  <p class="help">How extracted lines become Intacct fields. IDs must match what exists in your Intacct company exactly - copy them from the vendor, GL account, project and tax detail lists there.</p>
+  <div class="field"><label for="sage_location_id">Location ID</label><input id="sage_location_id" name="sage_location_id" type="text" value="{{ s.sage_location_id }}" style="max-width:14rem"></div>
+  <div class="field"><label for="sage_department_id">Department ID</label><input id="sage_department_id" name="sage_department_id" type="text" value="{{ s.sage_department_id }}" style="max-width:14rem"></div>
+  <div class="field"><label for="sage_tax_solution_id">Tax solution</label><input id="sage_tax_solution_id" name="sage_tax_solution_id" type="text" value="{{ s.sage_tax_solution_id }}" style="max-width:20rem"></div>
+
+  <div class="field">
+    <label>GL account by line category</label>
+    <div>
+      <div class="row">
+        {% for cat in categories %}
+          <div><label for="gl_{{ cat }}" style="font-size:0.85rem;color:var(--ink-soft)">{{ cat }}</label><input id="gl_{{ cat }}" name="gl_{{ cat }}" type="text" value="{{ s.gl_map.get(cat, '') }}"></div>
+        {% endfor %}
+      </div>
+      <div class="row" style="margin-top:0.5rem">
+        <div><label for="sage_default_gl" style="font-size:0.85rem;color:var(--ink-soft)">fallback</label><input id="sage_default_gl" name="sage_default_gl" type="text" value="{{ s.sage_default_gl }}"></div>
+        <div><label for="sage_cis_gl" style="font-size:0.85rem;color:var(--ink-soft)">CIS control</label><input id="sage_cis_gl" name="sage_cis_gl" type="text" value="{{ s.sage_cis_gl }}"></div>
+        <div><label for="sage_retention_gl" style="font-size:0.85rem;color:var(--ink-soft)">retention control</label><input id="sage_retention_gl" name="sage_retention_gl" type="text" value="{{ s.sage_retention_gl }}"></div>
+      </div>
+      <div class="hint">CIS deductions and retentions are added as negative lines to the control accounts when set; otherwise they are flagged for manual posting.</div>
+    </div>
+  </div>
+
+  <div class="field">
+    <label>VAT tax details<small>Intacct tax detail IDs</small></label>
+    <div>
+      <div class="row">
+        <div><label for="vat_20" style="font-size:0.85rem;color:var(--ink-soft)">20% standard</label><input id="vat_20" name="vat_20" type="text" value="{{ s.vat_detail_map.get('20', '') }}"></div>
+        <div><label for="vat_5" style="font-size:0.85rem;color:var(--ink-soft)">5% reduced</label><input id="vat_5" name="vat_5" type="text" value="{{ s.vat_detail_map.get('5', '') }}"></div>
+        <div><label for="vat_0" style="font-size:0.85rem;color:var(--ink-soft)">0% / exempt</label><input id="vat_0" name="vat_0" type="text" value="{{ s.vat_detail_map.get('0', '') }}"></div>
+        <div><label for="vat_rc" style="font-size:0.85rem;color:var(--ink-soft)">reverse charge</label><input id="vat_rc" name="vat_rc" type="text" value="{{ s.vat_detail_map.get('reverse_charge', '') }}"></div>
+      </div>
+      <div class="hint">e.g. <code>UK Purchase Goods Standard Rate</code>, <code>UK Purchase Services Reverse Charge Standard Rate</code> - whatever your tax solution calls them.</div>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="terms_map">Payment terms<small>days = Intacct term name</small></label>
+    <textarea id="terms_map" name="terms_map">{{ terms_map_text }}</textarea>
+  </div>
+  <div class="field">
+    <label for="vendor_map">Vendor map<small>supplier name = vendor ID</small></label>
+    <textarea id="vendor_map" name="vendor_map" placeholder="Kingspan Insulation Ltd = V0042&#10;Speedy Hire = V0117">{{ vendor_map_text }}</textarea>
+    <div class="hint">Matching ignores case, punctuation and Ltd/Limited/PLC. Anything unmatched is flagged on the invoice, where you can type the ID directly.</div>
+  </div>
+  <div class="field">
+    <label for="project_map">Project map<small>site or PO prefix = project ID</small></label>
+    <textarea id="project_map" name="project_map" placeholder="HEL18 = P-HEL18&#10;AMS01 = P-AMS01">{{ project_map_text }}</textarea>
+    <div class="hint">Matched against the project reference, PO number, site address and email subject.</div>
+  </div>
+</section>
+
+<div class="actions"><button class="btn primary" type="submit">Save settings</button></div>
+</form>
+
+{% endblock %}

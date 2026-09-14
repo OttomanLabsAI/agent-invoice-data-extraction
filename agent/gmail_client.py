@@ -1,0 +1,272 @@
+"""Gmail access via the Gmail API (OAuth 2.0).
+
+The app registers as an OAuth client using the Client ID / Client Secret pasted
+into Settings. The first "Connect Gmail" click sends the user through Google's
+consent screen; the resulting token (with a refresh token) is stored in
+data/google_token.json and refreshed automatically afterwards.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import re
+from datetime import datetime, timezone
+from html import unescape
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+
+from .config import GOOGLE_TOKEN_PATH, ensure_dirs
+
+# Read mail, download attachments, add labels and clear the unread flag.
+SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
+
+# Local HTTP redirect + Google occasionally returning extra scopes would
+# otherwise make oauthlib refuse the token exchange.
+os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
+SUPPORTED_MIME = {
+    "application/pdf": ".pdf",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+EXT_TO_MIME = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+MIN_IMAGE_BYTES = 20 * 1024  # anything smaller is almost certainly a logo or signature
+
+
+class GmailNotConnected(Exception):
+    pass
+
+
+# --------------------------------------------------------------------------- OAuth
+
+
+def client_config(settings: dict) -> dict:
+    return {
+        "installed": {
+            "client_id": settings.get("google_client_id", ""),
+            "client_secret": settings.get("google_client_secret", ""),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": ["http://localhost"],
+        }
+    }
+
+
+def make_flow(settings: dict, redirect_uri: str, state: str | None = None, code_verifier: str | None = None) -> Flow:
+    """Build the OAuth flow. The library uses PKCE, so the callback must be given the same
+    code_verifier the sign-in step generated - otherwise Google rejects the token exchange."""
+    kwargs = {"state": state}
+    if code_verifier:
+        kwargs["code_verifier"] = code_verifier
+    flow = Flow.from_client_config(client_config(settings), scopes=SCOPES, **kwargs)
+    flow.redirect_uri = redirect_uri
+    return flow
+
+
+def save_credentials(creds: Credentials) -> None:
+    ensure_dirs()
+    GOOGLE_TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+    try:
+        os.chmod(GOOGLE_TOKEN_PATH, 0o600)
+    except OSError:
+        pass
+
+
+def clear_credentials() -> None:
+    if GOOGLE_TOKEN_PATH.exists():
+        GOOGLE_TOKEN_PATH.unlink()
+
+
+def load_credentials() -> Credentials | None:
+    if not GOOGLE_TOKEN_PATH.exists():
+        return None
+    try:
+        creds = Credentials.from_authorized_user_file(str(GOOGLE_TOKEN_PATH), SCOPES)
+    except (OSError, ValueError):
+        return None
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        save_credentials(creds)
+    return creds
+
+
+def service():
+    creds = load_credentials()
+    if creds is None or not creds.valid:
+        raise GmailNotConnected("Gmail is not connected. Open Settings and click Connect Gmail.")
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
+def connection_status() -> dict:
+    """Cheap check used by the Settings page."""
+    if not GOOGLE_TOKEN_PATH.exists():
+        return {"connected": False, "email": None, "error": None}
+    try:
+        svc = service()
+        profile = svc.users().getProfile(userId="me").execute()
+        return {"connected": True, "email": profile.get("emailAddress"), "error": None}
+    except Exception as exc:  # noqa: BLE001 - surfaced to the UI
+        return {"connected": False, "email": None, "error": str(exc)}
+
+
+# --------------------------------------------------------------------------- Reading mail
+
+
+def _b64url_decode(data: str) -> bytes:
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+
+
+def _header(headers: list[dict], name: str) -> str:
+    for h in headers or []:
+        if h.get("name", "").lower() == name.lower():
+            return h.get("value", "")
+    return ""
+
+
+def _strip_html(html: str) -> str:
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I)
+    text = re.sub(r"<br\s*/?>|</p>|</div>|</tr>", "\n", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = unescape(text)
+    return re.sub(r"[ \t]+", " ", text).strip()
+
+
+def _walk_parts(part: dict, out: list[dict]) -> None:
+    out.append(part)
+    for child in part.get("parts", []) or []:
+        _walk_parts(child, out)
+
+
+def list_messages(svc, query: str, max_messages: int = 10) -> list[str]:
+    resp = svc.users().messages().list(userId="me", q=query, maxResults=max_messages).execute()
+    return [m["id"] for m in resp.get("messages", [])]
+
+
+def fetch_message(svc, msg_id: str) -> dict:
+    msg = svc.users().messages().get(userId="me", id=msg_id, format="full").execute()
+    payload = msg.get("payload", {})
+    headers = payload.get("headers", [])
+
+    parts: list[dict] = []
+    _walk_parts(payload, parts)
+
+    body_text = ""
+    body_html = ""
+    attachments: list[dict] = []
+
+    for part in parts:
+        mime = (part.get("mimeType") or "").lower()
+        filename = part.get("filename") or ""
+        body = part.get("body", {}) or {}
+
+        if filename:
+            ext = os.path.splitext(filename)[1].lower()
+            if mime not in SUPPORTED_MIME:
+                mime = EXT_TO_MIME.get(ext, mime)
+            if mime not in SUPPORTED_MIME:
+                continue
+            if body.get("attachmentId"):
+                att = (
+                    svc.users()
+                    .messages()
+                    .attachments()
+                    .get(userId="me", messageId=msg_id, id=body["attachmentId"])
+                    .execute()
+                )
+                data = _b64url_decode(att.get("data", ""))
+            elif body.get("data"):
+                data = _b64url_decode(body["data"])
+            else:
+                continue
+            if mime.startswith("image/") and len(data) < MIN_IMAGE_BYTES:
+                continue
+            attachments.append({"filename": filename, "mime_type": mime, "data": data, "size": len(data)})
+        elif mime == "text/plain" and body.get("data") and not body_text:
+            body_text = _b64url_decode(body["data"]).decode("utf-8", errors="replace")
+        elif mime == "text/html" and body.get("data") and not body_html:
+            body_html = _b64url_decode(body["data"]).decode("utf-8", errors="replace")
+
+    if not body_text and body_html:
+        body_text = _strip_html(body_html)
+
+    internal_ms = int(msg.get("internalDate", "0") or 0)
+    received_at = (
+        datetime.fromtimestamp(internal_ms / 1000, tz=timezone.utc).replace(microsecond=0).isoformat()
+        if internal_ms
+        else ""
+    )
+
+    return {
+        "id": msg_id,
+        "thread_id": msg.get("threadId"),
+        "from": _header(headers, "From"),
+        "to": _header(headers, "To"),
+        "subject": _header(headers, "Subject"),
+        "date": _header(headers, "Date"),
+        "received_at": received_at,
+        "snippet": msg.get("snippet", ""),
+        "body_text": body_text[:4000],
+        "attachments": attachments,
+        "label_ids": msg.get("labelIds", []),
+    }
+
+
+def sender_allowed(from_addr: str, allowed: str) -> bool:
+    entries = [e.strip().lower() for e in (allowed or "").replace("\n", ",").split(",") if e.strip()]
+    if not entries:
+        return True
+    from_lower = (from_addr or "").lower()
+    return any(e in from_lower for e in entries)
+
+
+# --------------------------------------------------------------------------- Labelling
+
+
+def _label_id(svc, name: str) -> str:
+    """Find a label by name, creating it (and any missing parents of a nested name) if needed."""
+    existing = {l.get("name", "").lower(): l["id"] for l in svc.users().labels().list(userId="me").execute().get("labels", [])}
+    if name.lower() in existing:
+        return existing[name.lower()]
+    parts = [p.strip() for p in name.split("/") if p.strip()]
+    label_id = ""
+    for depth in range(1, len(parts) + 1):
+        partial = "/".join(parts[:depth])
+        if partial.lower() in existing:
+            label_id = existing[partial.lower()]
+            continue
+        created = (
+            svc.users()
+            .labels()
+            .create(
+                userId="me",
+                body={"name": partial, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+            )
+            .execute()
+        )
+        label_id = created["id"]
+        existing[partial.lower()] = label_id
+    return label_id
+
+
+def mark_processed(svc, msg_id: str, label_name: str) -> None:
+    body = {"removeLabelIds": ["UNREAD"]}
+    if label_name:
+        body["addLabelIds"] = [_label_id(svc, label_name)]
+    svc.users().messages().modify(userId="me", id=msg_id, body=body).execute()
+
+
+def token_summary() -> dict:
+    if not GOOGLE_TOKEN_PATH.exists():
+        return {}
+    try:
+        return json.loads(GOOGLE_TOKEN_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}

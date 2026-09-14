@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Inbox{% endblock %}
+{% block content %}
+
+{% if not claude_ready or not gmail_connected %}
+<div class="nudge">
+  {% if not claude_ready and not gmail_connected %}
+    Nothing is connected yet. <a href="{{ url_for('settings_page') }}">Open Settings</a> to paste your Claude API key and connect the Gmail account. You can also drop a PDF below to try the extraction straight away once the Claude key is in.
+  {% elif not claude_ready %}
+    Gmail is connected but there is no Claude API key. <a href="{{ url_for('settings_page') }}">Add it in Settings</a> before checking the inbox.
+  {% else %}
+    Claude is ready but Gmail is not connected. <a href="{{ url_for('settings_page') }}">Connect it in Settings</a>, or upload invoices by hand below.
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="pagehead">
+  <div>
+    <h1>Inbox</h1>
+    <div class="meta">
+      {% if last_run %}
+        Last checked {{ (last_run.finished_at or last_run.started_at) | shortdate }}{% if last_run.finished_at %} at {{ last_run.finished_at[11:16] }} UTC{% endif %}
+        {% if last_run.summary %} · {{ last_run.summary }}{% endif %}
+      {% else %}
+        The inbox has not been checked yet.
+      {% endif %}
+    </div>
+  </div>
+  <div class="actions">
+    <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data" class="upload">
+      <input type="file" name="files" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple required>
+      <button class="btn" type="submit">Process upload</button>
+    </form>
+    <form method="post" action="{{ url_for('run_now') }}" class="inline">
+      <button class="btn primary" type="submit" {% if not (claude_ready and gmail_connected) %}disabled{% endif %}>Check inbox now</button>
+    </form>
+  </div>
+</div>
+
+<div class="counts">
+  <a href="{{ url_for('dashboard') }}" class="{{ 'active' if not active_status else '' }}"><strong>{{ counts.total }}</strong> all</a>
+  {% for key in ('review', 'approved', 'posted', 'queried', 'not_invoice', 'error') %}
+    <a href="{{ url_for('dashboard', status=key) }}" class="{{ 'active' if active_status == key else '' }}"><strong>{{ counts[key] }}</strong> {{ status_labels[key] | lower }}</a>
+  {% endfor %}
+  <a href="{{ url_for('export_csv', status=active_status) }}" style="margin-left:auto; margin-right:0">Download log CSV</a>
+</div>
+
+{% if invoices %}
+<table class="ledger">
+  <thead>
+    <tr>
+      <th>Received</th>
+      <th>Supplier</th>
+      <th>Invoice no</th>
+      <th>Invoice date</th>
+      <th class="num">Net</th>
+      <th class="num">VAT</th>
+      <th class="num">Gross</th>
+      <th class="num">Checks</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for inv in invoices %}
+    {% set rec = inv.extracted or {} %}
+    {% set issues = inv.issues or [] %}
+    <tr>
+      <td>{{ (inv.received_at or inv.created_at) | shortdate }}<span class="sub">{{ inv.source }}</span></td>
+      <td>
+        <a href="{{ url_for('invoice_detail', invoice_id=inv.id) }}">{{ (rec.supplier or {}).name or inv.from_addr or 'Unknown supplier' }}</a>
+        <span class="sub">{{ inv.subject or inv.attachment_name }}</span>
+      </td>
+      <td>{{ rec.invoice_number or '–' }}{% if rec.document_type and rec.document_type != 'invoice' %}<span class="sub">{{ rec.document_type | replace('_', ' ') }}</span>{% endif %}</td>
+      <td>{{ rec.invoice_date | shortdate }}</td>
+      <td class="num">{{ rec.net_total | money }}</td>
+      <td class="num">{{ rec.vat_total | money }}</td>
+      <td class="num">{{ rec.gross_total | money }}</td>
+      <td class="num">{% if issues %}<span class="flagcount">{{ issues | length }}</span>{% elif inv.status == 'error' %}<span class="flagcount">!</span>{% else %}0{% endif %}</td>
+      <td><span class="status {{ inv.status }}">{{ inv.status_label }}</span>{% if inv.intacct_recordno %}<span class="sub">Sage #{{ inv.intacct_recordno }}</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">
+  {% if active_status %}No invoices with this status.{% else %}No invoices yet. Check the inbox, or upload a PDF to see what the extraction produces.{% endif %}
+</div>
+{% endif %}
+
+{% endblock %}
