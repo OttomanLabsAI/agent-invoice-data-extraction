@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Invoice intake · Glent Group</title>
+  <meta name="description" content="The Glent Group invoice intake agent: reads supplier invoices from the accounts mailbox, fills in the details and prepares a Sage Intacct bill to check and post. Download the latest build or an older version.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/css/style.css">
+  <link rel="stylesheet" href="/assets/css/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="wordmark" href="/">Glent Group <span>invoice intake</span></a>
+    <nav>
+      <a href="#what">What it does</a>
+      <a href="#download">Download</a>
+      <a href="#run">Get it running</a>
+      <a href="#setup">Set up</a>
+      <a href="https://github.com/OttomanLabsAI/agent-invoice-data-extraction">GitHub</a>
+    </nav>
+  </header>
+  <main>
+
+    <section class="hero">
+      <h1>Invoice intake agent</h1>
+      <p class="lede">Reads the supplier invoices that land in the accounts mailbox, fills in the details, and hands you a Sage Intacct bill to check and post - or to key in from the entry sheet.</p>
+      <div class="actions">
+        <a class="btn primary" href="https://github.com/OttomanLabsAI/agent-invoice-data-extraction/archive/refs/heads/main.zip">Download the latest build</a>
+        <a class="btn" href="#what">See what it does</a>
+      </div>
+    </section>
+
+    <section class="sheet" id="what">
+      <h2>What it does, in four steps</h2>
+      <ol class="steps">
+        <li><strong>Watches the invoices mailbox.</strong> New emails with a PDF or image attached are picked up when you click <em>Check inbox now</em> or on a timer - or you drop a file on the page yourself.</li>
+        <li><strong>Reads each invoice.</strong> Claude fills in the supplier, invoice number and dates, every line, the VAT treatment including the domestic reverse charge, CIS and retention, and checks that the sums add up.</li>
+        <li><strong>Turns it into a Sage bill.</strong> The vendor, GL accounts, tax details, project and payment terms are matched from your coding maps. Anything it cannot match becomes a check to fix before approval.</li>
+        <li><strong>You review and post.</strong> Open the invoice, compare the fields with the document and the <em>Key into Sage</em> sheet, approve it, then post it to Intacct as a draft or key it in by hand. A CSV of everything drops into the purchase invoice log.</li>
+      </ol>
+      <div class="callout">
+        <p><strong>It runs on the accounts machine, not in the cloud.</strong> Once started, it lives at <code>http://localhost:8765</code> in your browser. API keys, the Gmail token and every invoice stay in the <code>data</code> folder on that machine. This website only hands out the downloads.</p>
+      </div>
+    </section>
+
+    <section class="sheet" id="download">
+      <h2>Download</h2>
+      <p class="help">Every download is a zip straight from GitHub. Unzip it and follow <a href="#run">Get it running</a>.</p>
+      <div class="field">
+        <label>Latest build</label>
+        <div>
+          <a class="btn primary" href="https://github.com/OttomanLabsAI/agent-invoice-data-extraction/archive/refs/heads/main.zip">Download the latest build</a>
+          <div class="hint">Always the newest version on the main branch.</div>
+        </div>
+      </div>
+      <div class="field" id="versions" data-repo="OttomanLabsAI/agent-invoice-data-extraction">
+        <label for="version-select">Older versions</label>
+        <div>
+          <div class="versions">
+            <select id="version-select" disabled><option>Loading…</option></select>
+            <a class="btn disabled" id="version-download" href="https://github.com/OttomanLabsAI/agent-invoice-data-extraction/releases" aria-disabled="true">Download this version</a>
+          </div>
+          <div class="hint" id="version-note">Looking up published versions…</div>
+          <noscript><div class="hint">Older versions are listed on the releases page.</div></noscript>
+          <div class="hint"><a href="https://github.com/OttomanLabsAI/agent-invoice-data-extraction/releases">All releases and their notes on GitHub</a></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="sheet" id="screens">
+      <h2>The three pages</h2>
+      <div class="shots">
+        <figure class="shot wide">
+          <a href="/assets/img/inbox.png"><img src="/assets/img/inbox.png" alt="The Inbox page: a ledger table with one invoice from Northbank Mechanical Services, its net, VAT and gross totals, zero open checks and a Needs review status" width="1200" height="760" loading="lazy"></a>
+          <figcaption><strong>Inbox.</strong> Every attachment that came in, with its totals, the number of open checks and its status. The counters filter the list; <em>Download log CSV</em> sits at their right.</figcaption>
+        </figure>
+        <figure class="shot">
+          <a href="/assets/img/review.png"><img src="/assets/img/review.png" alt="The review page: editable extracted fields and line items on the left, the Key into Sage entry sheet on the right" width="1200" height="760" loading="lazy"></a>
+          <figcaption><strong>Review.</strong> The extracted data on the left is editable and the line editor recalculates new lines. On the right sits the <em>Key into Sage</em> sheet, in the order of Intacct's bill screen.</figcaption>
+        </figure>
+        <figure class="shot">
+          <a href="/assets/img/settings.png"><img src="/assets/img/settings.png" alt="The Settings page: masked API key field with a reveal button, model choice, and the Gmail OAuth client fields" width="1200" height="760" loading="lazy"></a>
+          <figcaption><strong>Settings.</strong> Every key is pasted here and masked; the eye button reveals it so you can check a paste. <em>Connect Gmail</em> saves the page and opens Google's sign-in.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="sheet" id="run">
+      <h2>Get it running</h2>
+      <p class="help">One machine, one browser tab. The first start takes a minute or two while it sets itself up; after that it starts straight away.</p>
+      <ol class="steps">
+        <li><strong>Download</strong> the latest build above and unzip it somewhere sensible, such as a folder called <em>Invoice agent</em> in Documents.</li>
+        <li><strong>Have Python 3 on the machine</strong> (3.11 or newer). On Windows, install it from <a href="https://www.python.org/downloads/">python.org</a> and tick <em>Add python.exe to PATH</em> in the installer. Macs and Linux machines usually have it already.</li>
+        <li><strong>Start it.</strong> On Windows, double-click <code>run.bat</code>. On a Mac, open Terminal, type <code>bash </code> (with a space), drag <code>run.sh</code> into the window and press Enter. The window that opens is the app running - leave it open while you work; closing it stops the app.</li>
+        <li><strong>Open <code>http://localhost:8765</code></strong> in your browser. The Inbox tells you what still needs connecting.</li>
+      </ol>
+    </section>
+
+    <section class="sheet" id="setup">
+      <h2>Set up, on the Settings page</h2>
+      <p class="help">Every key field is masked; the eye button reveals it so you can check a paste. Save with the button at the top or the bottom of the page.</p>
+      <ol class="steps">
+        <li><strong>Claude.</strong> Paste an API key from the Claude Console. <em>Test key</em> checks it without spending tokens.</li>
+        <li><strong>Gmail.</strong> In Google Cloud Console create a project, enable the <strong>Gmail API</strong>, create an <em>OAuth client ID</em> of type <em>Desktop app</em>, paste its client ID and secret, save, then click <strong>Connect Gmail</strong> and sign in as the invoices mailbox. If Google reports <code>redirect_uri_mismatch</code>, create the client as <em>Web application</em> instead and add the redirect URI shown on the Settings page.</li>
+        <li><strong>Sage coding.</strong> Fill the maps from your Intacct lists: vendor names to vendor IDs, GL account per line category, VAT tax details, project codes, payment terms, and the CIS and retention control accounts. Anything unmapped shows up as a check on the invoice, where you can type the ID directly.</li>
+        <li><strong>Sage Intacct connection</strong> (optional). With Web Services credentials an approved invoice can be posted straight in as a draft bill. Without them everything still works: entry sheet, JSON, XML and CSV.</li>
+      </ol>
+      <p>Processed emails are marked read and labelled <code>Invoices/Processed</code>, and that label is always excluded from the next search, so nothing is read twice. Only PDF, PNG, JPG and WEBP attachments are read; images under 20 KB are treated as logos and skipped.</p>
+    </section>
+
+    <footer class="site-footer">
+      <span>Glent Group · invoice intake agent</span>
+      <a href="https://github.com/OttomanLabsAI/agent-invoice-data-extraction">Source, issues and releases on GitHub</a>
+      <span>The app runs locally. This site holds no data.</span>
+    </footer>
+  </main>
+  <script src="/assets/js/downloads.js"></script>
+</body>
+</html>

@@ -1,34 +1,38 @@
 # Invoice intake agent
 
-Two agents on a Cloudflare Worker, working a shared Gmail inbox for Glent Group's accounts team. The first reads new mail and labels the invoices; the second reads each labelled invoice with Claude and turns it into an AP bill ready for Sage Intacct - with a review screen, a "key this into Sage" sheet, JSON/XML payloads and a CSV that drops into the purchase invoice log.
+Watches a Gmail inbox for supplier invoices, reads each attachment with Claude, and turns it into an AP bill ready for Sage Intacct - with a review screen, a "key this into Sage" sheet, JSON/XML payloads and a CSV that drops into the purchase invoice log.
 
 ```
-Gmail (invoices@…) ──► Agent - Classification labels "Invoice Incoming" ──► Agent - Invoice Extraction reads the PDF/image ──► Sage-shaped bill ──► review ──► post / export
+Gmail (invoices@…)  ──►  Claude reads the PDF/image  ──►  Sage-shaped bill  ──►  review  ──►  post / export
 ```
 
-It runs in the browser at the Worker's address. Everyone on the team signs in with one shared app password.
+Runs locally on one machine at `http://localhost:8765`. Nothing is hosted; keys stay in `data/settings.json`.
 
-## Deploy it (once, by whoever looks after Cloudflare)
+## Run it
 
-1. Connect this repository in the Cloudflare dashboard: **Workers & Pages → Create → Import a repository**. Keep the default deploy command (`npx wrangler deploy`). Every push to `main` deploys.
-2. The first deploy creates the D1 database `invoice-agent` by itself; attachments are stored in it too, so there is nothing else to create.
-3. Open the Worker → **Settings → Variables and Secrets** and add a **secret** named `APP_PASSWORD`. Until it exists the app refuses every visitor and says so.
-4. Open the Worker's address and sign in.
+```bash
+./run.sh          # macOS / Linux (creates .venv, installs, starts)
+run.bat           # Windows
+```
 
-The Workers Paid plan is recommended: reading a large PDF into a request needs more CPU time than the free plan allows, and the paid plan also lifts the per-request limit on Gmail and Claude calls. Cloudflare Access can be put in front of the Worker later for per-person sign-in without any change to the app.
+or by hand: `pip install -r requirements.txt` then `python app.py`. Python 3.11 or newer.
 
 ## Set up (Settings page)
 
-Every key field is masked; the eye button reveals it so you can check a paste. Keys are stored in the app's own database on Cloudflare, behind the sign-in.
+Every key field is masked; the eye button reveals it so you can check a paste.
 
-**Claude** - paste an API key from the Claude Console. *Test key* checks it without spending tokens. Each agent chooses its own model on its tab.
+**Claude** - paste an API key from the Claude Console. *Test key* checks it without spending tokens. Sonnet 5 is the default and is plenty for invoices; Haiku 4.5 is cheaper if volume gets high.
 
 **Gmail** - the app talks to the Gmail API with OAuth, so it needs an OAuth client rather than a password:
 
 1. Google Cloud Console → create a project → *APIs & Services → Library* → enable **Gmail API**.
 2. *OAuth consent screen* → External → add the invoices mailbox as a test user (or publish the app if it is a Workspace account).
-3. *Credentials → Create credentials → OAuth client ID → Web application* → add the redirect URI shown on the Settings page (`https://<your worker>/oauth/callback`). Paste the client ID and secret into Settings, save.
-4. Click **Connect Gmail**, sign in as the invoices mailbox, allow access. The token is stored in the database and refreshes itself.
+3. *Credentials → Create credentials → OAuth client ID → Desktop app*. Paste the client ID and secret into Settings, save.
+4. Click **Connect Gmail**, sign in as the invoices mailbox, allow access. The token lands in `data/google_token.json` and refreshes itself.
+
+If Google complains about `redirect_uri_mismatch`, create the client as *Web application* instead and add the redirect URI shown on the Settings page.
+
+The search box uses Gmail's own syntax (`has:attachment is:unread label:Invoices`, `from:@supplier.co.uk`, etc.). After a message is processed it is marked read and labelled `Invoices/Processed`, and that label is always excluded from the next search, so nothing is read twice.
 
 **Sage Intacct** - optional. With Web Services credentials (sender ID + password, company ID, user ID + password) an approved invoice can be posted straight in as an AP bill, as *Draft* by default so accounts can check it inside Intacct before it posts. Without them, everything still works: you get the entry sheet, JSON, the XML gateway body, and the CSV.
 
@@ -44,32 +48,7 @@ Every key field is masked; the eye button reveals it so you can check a paste. K
 | CIS / retention control | deductions become negative lines to these accounts |
 | Location / department | stamped on every line |
 
-The maps come pre-filled with generic starting points for a UK contractor paying subcontractors and suppliers: Sage-style nominal codes (5000 materials, 6000 direct labour, 6002 subcontractors, 7700 plant hire, 7603 professional services, 7400 travel and subsistence, 5002 miscellaneous as the fallback, 2214 CIS deductions withheld, 2215 retentions held), Intacct's standard UK VAT tax detail names, payment terms from due-on-receipt to 90 days, and the fictional supplier and project from the sample invoice. Replace them with the IDs from Glent's own Intacct lists before the first real post - Intacct rejects a bill whose account, vendor or tax detail it does not know. Location and department are left blank, which posts without those dimensions.
-
 Anything that cannot be mapped is listed as a check on the invoice and blocks *Approve* until you fill it in (you can type a vendor or project ID straight on the invoice).
-
-**Invoice types** - different kinds of invoice need different coding, so the *Invoice types* tab carries one set of overrides and checks per kind. Five generic types come ready: *Subcontractor* (the whole invoice to the subcontractor account, services VAT details, CIS at 20% on the labour lines where the invoice is silent, a project required, reverse charge expected), *Materials supplier* (goods VAT, PO and project required), *Plant hire*, *Professional services* and *Overheads* (the fallback). Each type can override the GL account per line category, the VAT tax details, location, department and the Draft/Submit action, and can fill in what the invoice leaves out: a CIS deduction at a default rate, retention at a default percentage, payment terms. A missing PO or project blocks approval for types that need one; an unexpected VAT treatment is noted for the reviewer. Invoices are matched to a type by supplier name, then by CIS, reverse charge or application-for-payment signals, then by what the lines mostly are; the review page shows the match and lets you change it. Types can be renamed, added and removed.
-
-## The two agents
-
-**Agent - Classification** reads new mail and decides, email by email, whether it carries an invoice. Its tab holds the model (Opus 5 by default; it is a short call per email, so a cheaper model will do if volume gets high), the reference text, the Gmail search it sweeps (`has:attachment is:unread` by default), an optional sender allow-list, and the two labels it applies: `Invoice Incoming` for invoices and `Not an invoice` for everything else, so nothing is read twice. It never marks mail read. The tab lists its recent decisions with the reason for each. You can also apply the `Invoice Incoming` label by hand in Gmail to push an email through.
-
-**Agent - Invoice Extraction** reads every email labelled `Invoice Incoming` that has not been processed, sends each PDF or image to Claude with the invoice record schema, maps the result to a Sage Intacct bill and files it in the Inbox for review. Its tab holds the model (Opus 5 by default), the reference text, the processed label (`Invoices/Processed`, added with the email marked read once its attachments are in), the automatic-check interval, and the full list of fields it extracts.
-
-**Agent tree** is the map of all this: mailbox → classification → its two labels → extraction → Inbox → Sage, drawn as a tree with each box showing its model, last run and counts. Click a box to open it.
-
-**Reference text (RAG)** - each agent has a free-text box for what it should know: supplier names and how they word things, which references are project codes, CIS and retention conventions, senders whose mail is never an invoice, examples it has got wrong. Text under about 16,000 characters is sent whole with every call; longer text is split into paragraphs and only the ones that share words with the email are retrieved and sent.
-
-Both agents work in small batches per click (five emails classified, one email extracted) and the page keeps going by itself while more mail is waiting; *Stop* on the page halts it. With **Automatic checks** set to a number of minutes, a cron trigger runs both agents on that cadence without anyone clicking.
-
-## Workflow
-
-1. **Check inbox now** (or set automatic checks on the extraction tab) - or drag a PDF onto *Process upload* to test.
-2. Each attachment appears in the Inbox as *Needs review* with the number of open checks.
-3. Open it: the left side is the extracted data (editable, with the line editor recalculating new lines), the right side is the document and the **Key into Sage** sheet in the order of Intacct's bill screen.
-4. **Save changes** rebuilds the Sage payload (change the invoice type here if the match is wrong). **Approve** once the checks are clear.
-5. **Post to Sage** (if connected) or **Mark keyed in by hand**; **Query** parks it.
-6. **Download log CSV** on the Inbox for the purchase invoice log - one row per invoice, columns match the entry sheet.
 
 ## What gets extracted
 
@@ -77,48 +56,54 @@ For every invoice or credit note: supplier (name, address, VAT and company numbe
 
 Statements, remittances, quotes and marketing PDFs are filed under *Not an invoice* rather than mapped.
 
-## Local development and tests
+## Workflow
 
-```bash
-npm install
-cp .dev.vars.example .dev.vars   # set APP_PASSWORD
-npm run dev                      # http://localhost:8787 with a local database and bucket
-npm test                         # unit tests: mapper, normalisation, retrieval, CSV, helpers
-npm run smoke                    # end-to-end against wrangler dev with the fake mailbox and fake Claude
-npm run check                    # wrangler deploy --dry-run
-```
-
-`npm run smoke` starts the Worker with `TEST_FIXTURES=1`, which swaps in a three-email fake mailbox and canned Claude answers; nothing external is called. Never set that variable on the deployed Worker.
+1. **Check inbox now** (or set a polling interval in Settings) - or drag a PDF onto *Process upload* to test.
+2. Each attachment appears in the Inbox as *Needs review* with the number of open checks.
+3. Open it: the left side is the extracted data (editable, with the line editor recalculating totals), the right side is the document and the **Key into Sage** sheet in the order of Intacct's bill screen.
+4. **Save changes** rebuilds the Sage payload. **Approve** once the checks are clear.
+5. **Post to Sage** (if connected) or **Mark keyed in by hand**; **Query** parks it.
+6. **Download log CSV** on the Inbox for the purchase invoice log - one row per invoice, columns match the entry sheet.
 
 ## Files
 
 ```
-src/index.js          routing, sign-in gate, security headers, cron entry
-src/routes.js         page handlers (no business logic)
-src/pipeline.js       the two agents and the inbox check
-src/claude.js         Claude Messages API: extraction, classification, key check
-src/gmail.js          Gmail REST API and OAuth
-src/schema.js         record_invoice / label_email tool schemas and system prompts
-src/normalise.js      coerce numbers, recompute totals, check arithmetic
-src/rag.js            reference-text retrieval by paragraph
-src/sage_mapper.js    record → APBILL / APADJUSTMENT payload, XML, entry sheet, log row
-src/sage_client.js    Intacct XML gateway: test connection, create bill
-src/files.js          attachments stored in the database in 512 KB pieces
-src/settings.js       defaults, D1 storage, key=value map parsing, model list
-src/db.js             D1 schema and queries: settings, state, invoices, runs, classifications
-src/auth.js           app password and session cookie
-src/fixtures.js       fake mailbox and fake Claude for the smoke test
-src/views/            html helpers, layout with the tabs, every page
-public/               assets served as-is: style.css (ledger-paper look), app.js, favicon
-tests/                unit.test.js, smoke.js
-samples/              a fictional subcontractor invoice to test with (make_sample.py regenerates it; Python + reportlab, dev only)
-wrangler.jsonc        Worker, D1, assets and cron configuration
+app.py                 Flask app and routes
+agent/config.py        settings defaults and storage (data/settings.json, 0600)
+agent/gmail_client.py  OAuth, message + attachment fetch, labelling
+agent/extractor.py     Claude call: PDF/image → record_invoice tool schema
+agent/sage_mapper.py   record → APBILL / APADJUSTMENT payload, XML, entry sheet, log row
+agent/sage_client.py   Intacct XML gateway: test connection, create bill
+agent/pipeline.py      run loop, manual upload, background poller
+agent/store.py         SQLite (data/invoices.db)
+templates/, static/    the three pages
+samples/               a fictional subcontractor invoice to test with
+tests/smoke_test.py    end-to-end test with the Claude call mocked
+public/                the project website, served by Cloudflare Workers (see Website below)
+wrangler.jsonc         Cloudflare config for it; package.json carries wrangler
 ```
+
+Set `INVOICE_AGENT_DATA=/path` to keep `data/` somewhere else (a synced folder, for example) and `INVOICE_AGENT_PORT` to change the port.
+
+## Website
+
+`public/` is a small static site - the front door for the accounts team: what the agent does in four steps, downloads, how to get it running and how to set it up, with screenshots of the three pages. Cloudflare Workers serves it as static assets (no build step; nothing outside `public/` is deployed), and every push to `main` deploys it. The app itself is not hosted - it stays on the accounts machine as described above, and the site holds no data.
+
+The **Download** section offers the latest build as a zip of the `main` branch straight from GitHub, and an **Older versions** chooser. The chooser asks the GitHub API for the repository's releases (falling back to plain tags), lists them newest first, and points its button at the chosen tag's zip. With no releases published yet it says so; if GitHub cannot be reached it points at the releases page instead. Releases are created by hand from the release text in each push, so the chooser fills itself in as they are made.
+
+```bash
+npm install
+npm run dev      # preview at the address wrangler prints
+npm run check    # wrangler deploy --dry-run
+```
+
+The site uses the app's own `static/style.css` (copied to `public/assets/css/style.css`) plus `site.css` for layout and `assets/js/downloads.js` for the chooser. No external resources beyond the GitHub API calls: fonts fall back to system faces and the screenshots are local files.
+
+A browser-hosted version of this app (a Cloudflare Worker with two agent tabs, invoice types and database storage) was built and released as v2.0 to v2.7 and then retired in favour of this local app plus download page. It lives on in those tags and the history.
 
 ## Things to know
 
-- The Intacct field names follow the documented `APBILL` create object (`WHENCREATED`, `WHENDUE`, `VENDORID`, `RECORDID`, `DOCNUMBER`, `TERMNAME`, `TAXSOLUTIONID`, `APBILLITEMS/APBILLITEM` with `ACCOUNTNO`, `TRX_AMOUNT`, `LOCATIONID`, `DEPARTMENTID`, `PROJECTID`, `TAXENTRIES`). Credit notes map to `APADJUSTMENT` with negative amounts. The PO number goes in `DOCNUMBER` (reference); change `build` in `src/sage_mapper.js` if your Intacct uses PO matching through Purchasing instead.
+- The Intacct field names follow the documented `APBILL` create object (`WHENCREATED`, `WHENDUE`, `VENDORID`, `RECORDID`, `DOCNUMBER`, `TERMNAME`, `TAXSOLUTIONID`, `APBILLITEMS/APBILLITEM` with `ACCOUNTNO`, `TRX_AMOUNT`, `LOCATIONID`, `DEPARTMENTID`, `PROJECTID`, `TAXENTRIES`). Credit notes map to `APADJUSTMENT` with negative amounts. The PO number goes in `DOCNUMBER` (reference); change `sage_mapper.build` if your Intacct uses PO matching through Purchasing instead.
 - The Intacct push has been written against the XML gateway spec but not exercised against a live company - do the first post as *Draft* and compare against a bill keyed by hand.
-- Attachments and extracted data both live in the D1 database (`invoice-agent`) inside your Cloudflare account; files are stored in 512 KB pieces. The free plan caps a database at 500 MB, roughly a couple of thousand scanned invoices; Workers Paid raises it to 10 GB. Delete a row from the Inbox to remove its file too; the email keeps its labels.
+- Attachments and extracted data are stored locally under `data/`. Delete a row from the Inbox to remove it; the email keeps its processed label.
 - Only PDF, PNG, JPG and WEBP attachments are read; images under 20 KB are treated as logos and skipped.
-- The cron trigger fires every five minutes; the automatic-check interval on the extraction tab decides whether a run is due, so anything under five minutes behaves as five.
