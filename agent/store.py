@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     attachment_name TEXT,
     attachment_path TEXT,
     mime_type TEXT,
+    source_text TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'review',
     extracted_json TEXT,
     sage_json TEXT,
@@ -88,13 +89,18 @@ def connect():
         conn.close()
 
 
+def _add_column(conn, table: str, column: str, ddl: str) -> None:
+    columns = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
-        # Databases from the single-stage version have no stage column on runs.
-        columns = [row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()]
-        if "stage" not in columns:
-            conn.execute("ALTER TABLE runs ADD COLUMN stage TEXT NOT NULL DEFAULT 'inbox'")
+        # Columns added after the first release; databases made by an older version keep working.
+        _add_column(conn, "runs", "stage", "stage TEXT NOT NULL DEFAULT 'inbox'")
+        _add_column(conn, "invoices", "source_text", "source_text TEXT DEFAULT ''")
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict | None:
@@ -132,6 +138,7 @@ def insert_invoice(record: dict) -> int:
         "attachment_name": record.get("attachment_name"),
         "attachment_path": record.get("attachment_path"),
         "mime_type": record.get("mime_type"),
+        "source_text": record.get("source_text", ""),
         "status": record.get("status", "review"),
         "extracted_json": json.dumps(record.get("extracted")) if record.get("extracted") is not None else None,
         "sage_json": json.dumps(record.get("sage")) if record.get("sage") is not None else None,

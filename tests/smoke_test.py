@@ -7,6 +7,7 @@ Gmail is replaced by a fake mailbox and both Claude calls are mocked.
 
 from __future__ import annotations
 
+import base64
 import http.client
 import io
 import json
@@ -26,9 +27,10 @@ sys.path.insert(0, str(ROOT))
 TMP = Path(tempfile.mkdtemp(prefix="invoice-agent-test-"))
 os.environ["INVOICE_AGENT_DATA"] = str(TMP)
 
-from agent import config, extractor, gmail_client, invoice_types, pipeline, prompts, rag, sage_mapper, store  # noqa: E402
+from agent import config, extractor, gmail_client, invoice_types, mail_parts, pipeline, prompts, rag, sage_mapper, store  # noqa: E402
 
 SAMPLE_PDF = ROOT / "samples" / "sample-invoice.pdf"
+SAMPLE_EML = ROOT / "samples" / "sample-email-invoice.eml"
 
 FAKE_RECORD = {
     "document_type": "invoice",
@@ -289,6 +291,144 @@ def fake_classifier(api_key, model, email_meta, attachments, company_name="", re
     if any(a["mime_type"] == "application/pdf" for a in attachments):
         return {"verdict": "invoice", "document_kind": "invoice", "confidence": 0.97, "reason": "PDF invoice attached.", "usage": usage}
     return {"verdict": "not_invoice", "document_kind": "remittance advice", "confidence": 0.9, "reason": "Remittance, nothing to pay.", "usage": usage}
+
+
+def _b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii")
+
+
+class FakeGmail:
+    """Just enough of the Gmail API for fetch_message: users().messages().get() and .attachments().get()."""
+
+    class _Exec:
+        def __init__(self, value):
+            self.value = value
+
+        def execute(self):
+            return self.value
+
+    class _Attachments:
+        def __init__(self, blobs):
+            self.blobs = blobs
+
+        def get(self, userId=None, messageId=None, id=None):  # noqa: A002, N803 - Gmail API spelling
+            return FakeGmail._Exec({"data": _b64(self.blobs[id])})
+
+    class _Messages:
+        def __init__(self, message, blobs):
+            self.message, self.blobs = message, blobs
+
+        def get(self, userId=None, id=None, format=None):  # noqa: A002, N803 - Gmail API spelling
+            return FakeGmail._Exec(self.message)
+
+        def attachments(self):
+            return FakeGmail._Attachments(self.blobs)
+
+    class _Users:
+        def __init__(self, messages):
+            self._messages = messages
+
+        def messages(self):
+            return self._messages
+
+    def __init__(self, payload, blobs):
+        message = {"payload": payload, "threadId": "t-fwd", "internalDate": "1789430400000", "labelIds": ["INBOX"], "snippet": ""}
+        self._users = FakeGmail._Users(FakeGmail._Messages(message, blobs))
+
+    def users(self):
+        return self._users
+
+
+TEXT_INVOICE = {
+    "document_type": "invoice",
+    "supplier": {"name": "Raman Revit Services Ltd", "vat_number": "GB 837 2219 70"},
+    "invoice_number": "RRS-0027", "invoice_date": "2026-09-04", "due_date": "2026-09-18", "payment_terms_days": 14,
+    "po_number": "PO-26-01720", "project_reference": "HEL18", "description": "Revit MEP modelling - HEL18 - August 2026", "currency": "GBP",
+    "line_items": [{"description": "Revit MEP modelling - HEL18", "quantity": 19.5, "unit": "days", "unit_price": 320.0,
+                    "net_amount": 6240.0, "vat_rate": 20, "vat_amount": 1248.0, "category": "services"},
+                   {"description": "Weekend cutover support", "quantity": 1, "unit": "days", "unit_price": 480.0,
+                    "net_amount": 480.0, "vat_rate": 20, "vat_amount": 96.0, "category": "services"}],
+    "net_total": 6720.0, "vat_total": 1344.0, "gross_total": 8064.0, "amount_due": 8064.0,
+    "vat_treatment": "standard", "cis": {"applicable": False}, "retention": {"applicable": False},
+    "totals_reconcile": True, "confidence": 0.93, "flags": [],
+}
+
+
+def test_email_documents():
+    """An invoice that arrives as email text, inside a forwarded .eml, with a timesheet beside it."""
+    raw = SAMPLE_EML.read_bytes()
+    read = mail_parts.read_email(raw, "Re_ Invoice RRS-0026 - Glent Engineering.eml")
+    check("INVOICE RRS-0027" in read["text"] and "Total due: \u00a38,064.00" in read["text"], "the invoice written into a forwarded email is read as text")
+    check("From: Priya Raman" in read["text"] and "PO-26-01720" in read["text"] and "Raman Revit Services Ltd" in read["text"], "its headers, PO and supplier come through")
+    check("Timesheet_HEL18_PRaman_Aug2026.csv" in read["text"] and "Total standard days" in read["text"], "the timesheet attached to it is read as text")
+    check(read["documents"] == [] and read["skipped"] == [], "the 5.8 KB signature logo is not offered as a document")
+
+    check(mail_parts.document_mime("scan.PDF", "application/octet-stream") == "application/pdf", "a PDF sent as octet-stream is still a document")
+    check(mail_parts.document_mime("notes.csv", "text/csv") == "" and mail_parts.is_text("notes.csv", "text/csv"), "a CSV is text, not a document")
+    check(mail_parts.is_email("Re_ thing.eml", "application/octet-stream") and mail_parts.is_email("x", "message/rfc822"), "forwarded emails are spotted by type or extension")
+    check(mail_parts.too_small("image/png", b"x" * 5800) and not mail_parts.too_small("image/png", b"x" * 40000), "small images are logos, big ones are documents")
+    check("Hi there" in mail_parts.strip_html("<p>Hi there</p><style>p{color:red}</style>"), "HTML bodies are stripped to text")
+    check(mail_parts.read_email(b"not an email at all", "broken.eml")["text"] == "" or True, "an unreadable .eml does not raise")
+
+    # The same email as Gmail hands it over: an empty covering note, a logo, the forwarded email, a timesheet and an unreadable file
+    signature = "Fadil Karim\nBIM Coordinator\nGlent Group, 50-52 Wharf Road, London N1 7EU, UK."
+    blobs = {"logo": b"\x89PNG" + b"x" * 5800, "eml": raw, "csv": b"Timesheet,Priya Raman\nTotal standard days,19.5", "msg": b"outlook binary"}
+    payload = {
+        "mimeType": "multipart/mixed",
+        "headers": [{"name": "From", "value": "Fadil Karim <f.karim@glent.com>"}, {"name": "Subject", "value": ""},
+                    {"name": "Date", "value": "Mon, 15 Sep 2026 09:10:00 +0100"}],
+        "parts": [
+            {"mimeType": "text/plain", "body": {"data": _b64(signature.encode())}},
+            {"mimeType": "image/png", "filename": "image001.png", "body": {"attachmentId": "logo"}},
+            {"mimeType": "message/rfc822", "filename": "Re_ Invoice RRS-0026 - Glent Engineering.eml", "body": {"attachmentId": "eml"}},
+            {"mimeType": "text/csv", "filename": "Timesheet_HEL18_PRaman_Aug2026.csv", "body": {"attachmentId": "csv"}},
+            {"mimeType": "application/vnd.ms-outlook", "filename": "old thread.msg", "body": {"attachmentId": "msg"}},
+        ],
+    }
+    meta = gmail_client.fetch_message(FakeGmail(payload, blobs), "m-fwd")
+    check(meta["body_text"].startswith("Fadil Karim") and meta["attachments"] == [], "the covering note is the body; no file can be sent as a document")
+    check("INVOICE RRS-0027" in meta["attached_text"] and "Total standard days" in meta["attached_text"], "the forwarded invoice and the timesheet are carried as text")
+    check(meta["text_sources"] == ["Re_ Invoice RRS-0026 - Glent Engineering.eml", "Timesheet_HEL18_PRaman_Aug2026.csv"], f"the text sources are named ({meta['text_sources']})")
+    check(meta["skipped_attachments"] == ["old thread.msg"], "an attachment that cannot be read is reported by name")
+
+    context = extractor.classification_context(meta, meta["attachments"])
+    check("INVOICE RRS-0027" in context and "8,064.00" in context and "old thread.msg" in context, "the classification agent is now shown the forwarded invoice")
+    check(extractor.email_context(meta, has_document=False).startswith("There is no attached document"), "the extraction agent is told to read the email text")
+    check("INVOICE RRS-0027" in extractor.email_context(meta, has_document=False), "and is given that text")
+    check("forwarded email" in prompts.CLASSIFY_SYSTEM and "written out in the email text" in prompts.CLASSIFY_SYSTEM, "the classification prompt covers body and forwarded invoices")
+    check("statement of account is not an invoice" in prompts.CLASSIFY_SYSTEM and "changed bank details" in prompts.CLASSIFY_SYSTEM, "and keeps statements out while flagging bank-detail changes")
+    check("no document is attached" in prompts.EXTRACT_SYSTEM, "the extraction prompt covers an invoice in the email text")
+
+    # A PDF inside a forwarded email becomes a document in its own right
+    inner = ("From: supplier@example.com\nSubject: Invoice 99\nMIME-Version: 1.0\n"
+             'Content-Type: multipart/mixed; boundary="b"\n\n--b\nContent-Type: text/plain\n\nInvoice attached.\n\n--b\n'
+             'Content-Type: application/pdf\nContent-Transfer-Encoding: base64\nContent-Disposition: attachment; filename="inv99.pdf"\n\n'
+             + base64.b64encode(SAMPLE_PDF.read_bytes()).decode() + "\n--b--\n").encode()
+    nested = mail_parts.read_email(inner, "fwd.eml")
+    check(len(nested["documents"]) == 1 and nested["documents"][0]["filename"] == "fwd.eml > inv99.pdf", f"a PDF inside a forwarded email is pulled out as a document ({[d['filename'] for d in nested['documents']]})")
+    check(nested["documents"][0]["data"].startswith(b"%PDF") and nested["documents"][0]["mime_type"] == "application/pdf", "with its bytes and type intact")
+
+    # End to end: a labelled email with no document is read from its text
+    store.init_db()
+    box = FakeMailbox({"m-text": meta})
+    box.labels["m-text"].add("Invoice Incoming")
+    usage = {"input_tokens": 1800, "output_tokens": 400, "model": "test"}
+    with mock.patch.object(gmail_client, "connect", return_value=box), \
+         mock.patch.object(extractor, "extract_invoice", return_value=(extractor.normalise(TEXT_INVOICE), usage)) as extract:
+        result = pipeline.extract_run(SETTINGS)
+    check(result["ok"] and result["processed"] == 1 and result["errors"] == 0, f"the email with no document is processed, not skipped ({result})")
+    check(extract.call_args.kwargs["attachment"] is None and extract.call_args.kwargs["mime_type"] == "", "extraction is asked to read the text, with no document")
+    row = next(i for i in store.list_invoices() if i["gmail_message_id"] == "m-text")
+    check(row["status"] == "review" and row["attachment_name"] == pipeline.EMAIL_TEXT_NAME and not row["attachment_path"], f"filed in the Inbox as an email-text invoice ({row['attachment_name']})")
+    check("INVOICE RRS-0027" in (row["source_text"] or "") and "Total standard days" in row["source_text"], "the text it was read from is kept for the review page")
+    check(row["extracted"]["invoice_number"] == "RRS-0027" and row["sage"]["invoice_type"]["id"] == "professional"
+          and row["sage"]["bill"]["ITEMS"][0]["ACCOUNTNO"] == "7603", f"mapped like any other invoice ({row['sage']['invoice_type']})")
+    import app as webapp  # noqa: E402 - already imported by the route tests, cheap here
+    page = webapp.app.test_client().get(f"/invoice/{row['id']}")
+    check(b"No document was attached" in page.data and b"INVOICE RRS-0027" in page.data, "the review page shows the email text in place of the document")
+
+    again = pipeline.extract_run(SETTINGS)
+    check(again["processed"] == 0 and again["skipped"] == 0, "and it is not read twice")
 
 
 def test_agents():
@@ -576,7 +716,10 @@ def test_updater():
     check(updater.version_key("v3.2") == (3, 2) and updater.version_key("3.10.0") == (3, 10) and updater.version_key("main") is None, "version keys parse tags and package versions")
     check(updater.version_label("3.2.0") == "v3.2" and updater.version_label("") == "", "version labels are vMAJOR.MINOR")
     check(updater.valid_tag("latest") and updater.valid_tag("v3.2") and updater.valid_tag("3.2.1") and not updater.valid_tag("../x") and not updater.valid_tag(""), "version names are validated before they become URLs")
-    check((ROOT / "VERSION").read_text().strip() == "3.3" and json.loads((ROOT / "package.json").read_text())["version"] == "3.3.0", "VERSION file and package version agree")
+    version = (ROOT / "VERSION").read_text().strip()
+    package = json.loads((ROOT / "package.json").read_text())["version"]
+    check(updater.version_key(version) is not None and updater.version_key(version) == updater.version_key(package) and package.endswith(".0"),
+          f"VERSION file and package version agree ({version} / {package})")
 
     base = TMP / "desktop"
     old = base / "agent-invoice-data-extraction-main"
@@ -670,6 +813,7 @@ if __name__ == "__main__":
         test_mapper()
         test_types_rag_and_config()
         test_agents()
+        test_email_documents()
         test_pipeline_and_routes()
         test_updater()
         print("\nAll checks passed.")

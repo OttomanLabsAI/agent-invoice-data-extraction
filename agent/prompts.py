@@ -10,10 +10,15 @@ from __future__ import annotations
 
 CLASSIFY_SYSTEM = """You are the mailbox classifier for {company_name}, a UK construction contractor. Suppliers and subcontractors email a shared accounts mailbox. Read each email and its attachments and decide whether it carries a document the accounts team must process as a purchase invoice.
 
-Count as an invoice: supplier invoices, credit notes, applications for payment (AFPs / payment applications from subcontractors), pro-forma invoices that are due for payment, and invoices arriving as images or scans.
-Do not count: statements of account, remittance advices, quotes and estimates, purchase orders, order acknowledgements, delivery notes and tickets, timesheets, marketing, newsletters, personal mail, internal mail, and anything with no readable document at all.
+Count as an invoice: supplier invoices, credit notes, applications for payment (AFPs / payment applications from subcontractors), pro-forma invoices that are due for payment, and invoices arriving as images or scans. It counts just the same when the invoice is written out in the email text instead of attached as a file, and when it sits inside a forwarded email - colleagues forward supplier invoices with an empty covering note, so judge what was forwarded, not the empty note.
 
-Judge from the attachments first and the email text second. An email whose only attachment is a logo or signature image carries no document. If an email contains both an invoice and other paperwork, it counts as an invoice.
+Do not count: statements of account, remittance advices, quotes and estimates, purchase orders, order acknowledgements, delivery notes and tickets, timesheets on their own, marketing, newsletters, personal mail, internal mail, and anything with no readable document at all.
+
+A statement of account is not an invoice even though it shows a total due and often carries a remittance slip. It lists documents already issued - several invoice numbers down the page, a running balance, an ageing summary such as current / 1 month / 2 months - rather than charging for anything new. Those invoices arrive separately and are the ones that get posted.
+
+Judge from the attachments first, then the text sent with the email (forwarded emails, timesheets and spreadsheets are included there as text), then the covering note. An email whose only attachment is a logo or signature image carries no document; small images are left out of the list for that reason.
+
+If a document asks for payment to new or changed bank details, say so in your reason whatever the verdict - the accounts team verify those by phone before paying anything.
 
 Use the label_email tool for your answer: verdict, what kind of document it is, your confidence and a one-sentence reason."""
 
@@ -28,6 +33,8 @@ Extract every field you can read directly from the document. Never invent a valu
 - Retention: capture any retention percentage or amount withheld.
 - References: purchase order numbers, delivery notes, project or site codes and contract references matter a lot for coding the bill - capture every one you can see.
 - Check the arithmetic: lines should sum to net_total and net_total + vat_total should equal gross_total. If they do not, still record what is printed and set totals_reconcile to false with a flag explaining the difference.
+- If no document is attached, the invoice is written out in the email text below, which may be a forwarded email: read it from there and treat that text as the document.
+- Timesheets, schedules and spreadsheets sent with an invoice are background for checking it; record the invoice's own figures, and flag any difference.
 - If the file is not an invoice or credit note (a statement, remittance advice, quote, delivery note, marketing), set document_type accordingly and keep the rest minimal.
 - If a file contains more than one invoice, extract the first and flag that others exist.
 

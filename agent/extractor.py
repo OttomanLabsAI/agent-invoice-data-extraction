@@ -210,30 +210,39 @@ def media_block(attachment: bytes, mime_type: str) -> dict:
     return {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": data}}
 
 
-def build_content(attachment: bytes, mime_type: str, context_text: str) -> list[dict]:
-    return [media_block(attachment, mime_type), {"type": "text", "text": context_text}]
+def build_content(attachment: bytes | None, mime_type: str, context_text: str) -> list[dict]:
+    """The document (when there is one) and the note that goes with it."""
+    blocks = [media_block(attachment, mime_type)] if attachment else []
+    return blocks + [{"type": "text", "text": context_text}]
 
 
 def _email_query(meta: dict | None, attachments: list[dict] | None = None) -> str:
     meta = meta or {}
-    parts = [meta.get("from"), meta.get("subject"), meta.get("attachment_name"), meta.get("body_text")]
+    parts = [meta.get("from"), meta.get("subject"), meta.get("attachment_name"), meta.get("body_text"), meta.get("attached_text")]
     parts += [a.get("filename") for a in (attachments or [])]
     return "\n".join(str(p) for p in parts if p)
 
 
-def email_context(meta: dict | None) -> str:
+def email_context(meta: dict | None, has_document: bool = True) -> str:
     if not meta:
         return "Read the attached document and record it with the record_invoice tool."
+    if has_document:
+        opening = "The attached document arrived by email. Use the email details for context (they often carry the PO or site reference) but the document itself is the source of truth."
+    else:
+        opening = "There is no attached document: the invoice is written out in the email text below, which may be a forwarded email. Read it from there."
     lines = [
-        "The attached document arrived by email. Use the email details for context (they often carry the PO or site reference) but the document itself is the source of truth.",
+        opening,
         f"From: {meta.get('from', '')}",
         f"Subject: {meta.get('subject', '')}",
         f"Date: {meta.get('date', '')}",
-        f"Attachment: {meta.get('attachment_name', '')}",
     ]
+    if has_document:
+        lines.append(f"Attachment: {meta.get('attachment_name', '')}")
     body = (meta.get("body_text") or "").strip()
-    if body:
-        lines.append("Email body:\n" + body[:2500])
+    lines.append("Email body:\n" + (body[:2500] if body else "(empty)"))
+    attached = (meta.get("attached_text") or "").strip()
+    if attached:
+        lines.append("Text carried with the email (forwarded emails, timesheets, spreadsheets):\n" + attached[:9000])
     lines.append("Record the document with the record_invoice tool.")
     return "\n".join(lines)
 
@@ -255,17 +264,20 @@ def _parse_text_json(text: str) -> dict | None:
 def extract_invoice(
     api_key: str,
     model: str,
-    attachment: bytes,
-    mime_type: str,
+    attachment: bytes | None = None,
+    mime_type: str = "",
     company_name: str = "Glent Group",
     default_currency: str = "GBP",
     email_meta: dict | None = None,
     reference_text: str = "",
     system_template: str | None = None,
 ) -> tuple[dict, dict]:
-    """Return (extracted_record, usage). Raises anthropic errors on API failure."""
-    if len(attachment) > MAX_ATTACHMENT_BYTES:
+    """Read one document into the invoice record. With no attachment the invoice is read
+    from the email text instead. Returns (extracted_record, usage)."""
+    if attachment and len(attachment) > MAX_ATTACHMENT_BYTES:
         raise ValueError("Attachment is larger than 30 MB; split it or compress it first.")
+    if not attachment and not (email_meta or {}).get("body_text") and not (email_meta or {}).get("attached_text"):
+        raise ValueError("Nothing to read: no document and no email text.")
 
     notes = rag.retrieve(reference_text, _email_query(email_meta))
     client = anthropic.Anthropic(api_key=api_key)
@@ -275,7 +287,7 @@ def extract_invoice(
         system=system_prompt(company_name, default_currency, notes, system_template),
         tools=[INVOICE_TOOL],
         tool_choice={"type": "auto"},
-        messages=[{"role": "user", "content": build_content(attachment, mime_type, email_context(email_meta))}],
+        messages=[{"role": "user", "content": build_content(attachment, mime_type, email_context(email_meta, has_document=bool(attachment)))}],
     )
 
     record: dict | None = None
@@ -307,15 +319,22 @@ def classification_context(meta: dict, attachments: list[dict]) -> str:
     """The note that goes with each email's attachments (also shown on the agent's tab)."""
     listed = "; ".join(f"{a['filename']} ({a['mime_type']}, {round(a.get('size', 0) / 1024)} KB)" for a in attachments) or "none"
     body = (meta.get("body_text") or meta.get("snippet") or "").strip()
-    return "\n".join([
+    attached = (meta.get("attached_text") or "").strip()
+    lines = [
         f"From: {meta.get('from', '')}",
         f"To: {meta.get('to', '')}",
         f"Subject: {meta.get('subject', '')}",
         f"Date: {meta.get('date') or meta.get('received_at') or ''}",
-        f"Attachments: {listed}",
-        "Email body:\n" + (body[:3000] if body else "(empty)"),
-        "Decide with the label_email tool.",
-    ])
+        f"Documents attached and sent with this email: {listed}",
+    ]
+    skipped = ", ".join(meta.get("skipped_attachments") or [])
+    if skipped:
+        lines.append(f"Also attached but not readable here: {skipped}")
+    lines.append("Email body:\n" + (body[:3000] if body else "(empty)"))
+    if attached:
+        lines.append("Text carried with the email (forwarded emails, timesheets, spreadsheets):\n" + attached[:9000])
+    lines.append("Decide with the label_email tool.")
+    return "\n".join(lines)
 
 
 def classify_email(

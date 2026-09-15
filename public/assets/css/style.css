@@ -283,3 +283,6 @@ textarea.prompt { min-height: 22rem; font-family: var(--mono); font-size: 0.8rem
 .examples { margin: 0.1rem 0 0.4rem; padding-left: 1.1rem; }
 .examples li { font-family: var(--mono); font-size: 0.78rem; color: var(--ink-soft); margin: 0 0 0.4rem; }
 pre.prompt { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 26rem; overflow: auto; font-size: 0.8rem; line-height: 1.45; background: var(--paper); border: 1px solid var(--rule); padding: 0.7rem 0.9rem; }
+
+/* ---------- Review: the email text, when the invoice came with no document */
+pre.preview.source { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; font-size: 0.78rem; line-height: 1.5; background: var(--sheet); border: 1px solid var(--rule-strong); padding: 0.8rem 1rem; margin: 0; }

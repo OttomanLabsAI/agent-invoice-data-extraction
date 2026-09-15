@@ -22,6 +22,10 @@ _run_lock = threading.Lock()
 
 BUSY = {"ok": False, "message": "A run is already in progress."}
 
+# Rows for emails with no attached document: one for an invoice typed into the email, one for nothing to read.
+EMAIL_TEXT_NAME = "(invoice in the email text)"
+NO_DOCUMENT_NAME = "(no supported attachment)"
+
 
 def _safe_name(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name or "attachment")
@@ -37,17 +41,18 @@ def save_attachment(data: bytes, filename: str, key: str) -> Path:
 
 def process_attachment(
     settings: dict,
-    data: bytes,
+    data: bytes | None,
     filename: str,
     mime_type: str,
     email_meta: dict | None = None,
     source: str = "gmail",
 ) -> int:
-    """Extract, map and store one attachment. Returns the new invoice id."""
+    """Extract, map and store one document. With no data the invoice is read from the
+    email text instead (see process_email_text). Returns the new invoice id."""
     meta = dict(email_meta or {})
     meta["attachment_name"] = filename
     key = meta.get("id") or f"upload-{int(time.time())}"
-    path = save_attachment(data, filename, key)
+    path = save_attachment(data, filename, key) if data else None
 
     base_record = {
         "source": source,
@@ -57,8 +62,10 @@ def process_attachment(
         "subject": meta.get("subject"),
         "received_at": meta.get("received_at"),
         "attachment_name": filename,
-        "attachment_path": str(path),
+        "attachment_path": str(path) if path else None,
         "mime_type": mime_type,
+        # With no file, keep what was read so the review page can show it beside the fields.
+        "source_text": "" if data else extractor.email_context(meta, has_document=False),
     }
 
     try:
@@ -92,6 +99,11 @@ def process_attachment(
         "input_tokens": usage.get("input_tokens", 0),
         "output_tokens": usage.get("output_tokens", 0),
     })
+
+
+def process_email_text(settings: dict, email_meta: dict, source: str = "gmail") -> int:
+    """Read an invoice written into the email itself, or into an email forwarded with it."""
+    return process_attachment(settings, None, EMAIL_TEXT_NAME, "", email_meta=email_meta, source=source)
 
 
 def remap(invoice: dict, settings: dict, overrides: dict | None = None) -> dict:
@@ -142,7 +154,9 @@ def classify_run(settings: dict, limit: int | None = None) -> dict:
             summary["looked"] += 1
             base = {
                 "gmail_message_id": msg_id, "from_addr": meta.get("from"), "subject": meta.get("subject"),
-                "received_at": meta.get("received_at"), "attachments": ", ".join(a["filename"] for a in meta["attachments"]),
+                "received_at": meta.get("received_at"),
+                "attachments": ", ".join([a["filename"] for a in meta["attachments"]]
+                                         + list(meta.get("text_sources") or []) + list(meta.get("skipped_attachments") or [])),
             }
 
             if not gmail_client.sender_allowed(meta.get("from", ""), settings.get("gmail_allowed_senders", "")):
@@ -247,8 +261,19 @@ def extract_run(settings: dict, limit: int | None = None) -> dict:
                     summary["processed"] += 1
 
             if not meta["attachments"]:
-                summary["skipped"] += 1
-                if not store.already_processed(msg_id, "(no supported attachment)"):
+                text = ((meta.get("body_text") or "") + (meta.get("attached_text") or "")).strip()
+                if store.already_processed(msg_id, EMAIL_TEXT_NAME) or store.already_processed(msg_id, NO_DOCUMENT_NAME):
+                    summary["skipped"] += 1
+                elif text:
+                    # No file, but this email was labelled as an invoice: read the invoice from its text.
+                    invoice_id = process_email_text(settings, meta)
+                    row = store.get_invoice(invoice_id)
+                    if row and row["status"] == "error":
+                        summary["errors"] += 1
+                    else:
+                        summary["processed"] += 1
+                else:
+                    summary["skipped"] += 1
                     store.insert_invoice({
                         "source": "gmail",
                         "gmail_message_id": msg_id,
@@ -256,10 +281,10 @@ def extract_run(settings: dict, limit: int | None = None) -> dict:
                         "from_addr": meta.get("from"),
                         "subject": meta.get("subject"),
                         "received_at": meta.get("received_at"),
-                        "attachment_name": "(no supported attachment)",
+                        "attachment_name": NO_DOCUMENT_NAME,
                         "mime_type": "",
                         "status": "not_invoice",
-                        "notes": "Email had no PDF or image attachment.",
+                        "notes": "Email had no document and no text to read.",
                     })
 
             try:

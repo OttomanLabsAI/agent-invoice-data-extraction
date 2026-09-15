@@ -87,7 +87,19 @@ A type is matched in this order: chosen by hand on the review page, the supplier
 
 For every invoice or credit note: supplier (name, address, VAT and company numbers, remittance email), invoice number and dates, payment terms, PO number and other references, project / site, one-line description, currency, every line with net / VAT rate / VAT / category, net-VAT-gross totals with a VAT breakdown, VAT treatment (including the domestic reverse charge for construction services), CIS labour/materials split and deduction, retention withheld, amount payable, bank details for the payment run, plus a confidence score and a list of things to check by hand. Totals are re-checked arithmetically after extraction. The full record is listed on the extraction agent's tab.
 
-Statements, remittances, quotes and marketing PDFs are normally stopped by the classification agent; anything that gets through is filed under *Not an invoice* rather than mapped.
+Statements, remittances, quotes and marketing PDFs are normally stopped by the classification agent; anything that gets through is filed under *Not an invoice* rather than mapped. A statement of account is not an invoice even though it shows a total due: it lists invoices already issued, and those arrive separately. If a document asks for payment to new or changed bank details, the agent says so in its reason whatever the verdict.
+
+**Invoices that are not a PDF.** Plenty of invoices never arrive as an attachment. The app reads:
+
+| It arrives as | What happens |
+|---|---|
+| A PDF or image attachment | Sent to Claude as the document, as ever |
+| Written out in the email itself | Read from the email text; the review page shows that text in place of the document |
+| Inside a forwarded email (a `.eml` attachment), often with an empty covering note | The forwarded email is opened: its text is read, and any PDF or image inside it becomes a document in its own right |
+| A timesheet, schedule or CSV beside the invoice | Read as text and given to the agents as background |
+| Anything else (a `.msg` file, say) | Named for the reviewer, not read |
+
+Logos and signature images under 20 KB are ignored, so an email whose only attachment is a logo is judged on its text.
 
 ## Workflow
 
@@ -104,6 +116,7 @@ Statements, remittances, quotes and marketing PDFs are normally stopped by the c
 app.py                 Flask app and routes
 agent/config.py        settings defaults (generic Sage coding, both agents, invoice types) and storage (data/settings.json, 0600)
 agent/gmail_client.py  OAuth, message + attachment fetch, labelling, the Mailbox wrapper the agents use
+agent/mail_parts.py    what an email carries: forwarded .eml files, timesheets and spreadsheets read as text, documents dug out of a forward
 agent/extractor.py     Claude calls: label_email tool for classification, record_invoice tool for extraction; prompts assembled from the templates
 agent/rag.py           reference text retrieval: whole text when short, matching paragraphs when long
 agent/prompts.py       the shipped system prompt for each agent, placeholder filling and the Restore default check
@@ -114,7 +127,7 @@ agent/sage_client.py   Intacct XML gateway: test connection, create bill
 agent/pipeline.py      classification run, extraction run, manual upload, background poller
 agent/store.py         SQLite (data/invoices.db): invoices, runs, classification decisions
 templates/, static/    the six tabs
-samples/               a fictional subcontractor invoice to test with
+samples/               a fictional subcontractor invoice, and a forwarded email whose invoice is in the text
 tests/smoke_test.py    end-to-end test with Gmail and both Claude calls faked, plus the updater with GitHub faked
 updater/               the desktop updater: updater.py (local page + install + start), updater.html, update.bat, update.command, README.txt, make_zip.py
 VERSION                the release number the updater compares with the one on GitHub

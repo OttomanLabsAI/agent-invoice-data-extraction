@@ -170,6 +170,9 @@
         <img class="preview" src="{{ url_for('invoice_file', invoice_id=inv.id) }}" alt="Invoice image">
       {% endif %}
       <p class="help" style="margin:0.4rem 0 1rem"><a href="{{ url_for('invoice_file', invoice_id=inv.id) }}" target="_blank" rel="noopener">Open {{ inv.attachment_name }}</a> in a new tab</p>
+    {% elif inv.source_text %}
+      <pre class="preview source">{{ inv.source_text }}</pre>
+      <p class="help" style="margin:0.4rem 0 1rem">No document was attached: this is the email text the invoice was read from.</p>
     {% endif %}
 
     <div class="entry">

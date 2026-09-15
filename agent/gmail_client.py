@@ -13,13 +13,13 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from html import unescape
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
+from . import mail_parts
 from .config import GOOGLE_TOKEN_PATH, ensure_dirs
 
 # Read mail, download attachments, add labels and clear the unread flag.
@@ -30,15 +30,10 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
-SUPPORTED_MIME = {
-    "application/pdf": ".pdf",
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-}
-EXT_TO_MIME = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
-MIN_IMAGE_BYTES = 20 * 1024  # anything smaller is almost certainly a logo or signature
+# What counts as a readable document lives in mail_parts; re-exported here for the rest of the app.
+SUPPORTED_MIME = mail_parts.SUPPORTED_MIME
+EXT_TO_MIME = mail_parts.EXT_TO_MIME
+MIN_IMAGE_BYTES = mail_parts.MIN_IMAGE_BYTES
 
 
 class GmailNotConnected(Exception):
@@ -131,18 +126,84 @@ def _header(headers: list[dict], name: str) -> str:
     return ""
 
 
-def _strip_html(html: str) -> str:
-    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I)
-    text = re.sub(r"<br\s*/?>|</p>|</div>|</tr>", "\n", text, flags=re.I)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = unescape(text)
-    return re.sub(r"[ \t]+", " ", text).strip()
+def _part_data(svc, msg_id: str, part: dict) -> bytes:
+    body = part.get("body", {}) or {}
+    if body.get("attachmentId"):
+        att = svc.users().messages().attachments().get(userId="me", messageId=msg_id, id=body["attachmentId"]).execute()
+        return _b64url_decode(att.get("data", ""))
+    if body.get("data"):
+        return _b64url_decode(body["data"])
+    return b""
 
 
-def _walk_parts(part: dict, out: list[dict]) -> None:
-    out.append(part)
-    for child in part.get("parts", []) or []:
-        _walk_parts(child, out)
+def _forwarded_name(part: dict) -> str:
+    """A name for a forwarded email that arrived without a filename."""
+    headers = part.get("headers", [])
+    subject = _header(headers, "Subject") or "forwarded email"
+    sender = _header(headers, "From")
+    return f"{subject} (from {sender})" if sender else subject
+
+
+def _collect(svc, msg_id: str, part: dict, out: dict, container: str = "", depth: int = 0) -> None:
+    """Walk one part of a Gmail message, sorting it into body text, attached text and documents.
+
+    `container` is set while inside a forwarded email, so its text is kept apart from
+    the covering email's own body - forwards often arrive with an empty covering note.
+    """
+    mime = (part.get("mimeType") or "").lower()
+    filename = part.get("filename") or ""
+    children = part.get("parts") or []
+
+    if mail_parts.is_email(filename, mime):
+        name = filename or _forwarded_name(part)
+        if depth >= mail_parts.MAX_EML_DEPTH:
+            out["skipped"].append(name)
+            return
+        raw = _part_data(svc, msg_id, part)
+        if raw:
+            parsed = mail_parts.read_email(raw, name, depth + 1)
+            if parsed["text"]:
+                out["attached_text"].append(parsed["text"])
+                out["text_sources"].append(name)
+            out["documents"] += parsed["documents"]
+            out["skipped"] += parsed["skipped"]
+            return
+        # No raw copy: Gmail has already broken the forwarded email into parts, so read those.
+        out["attached_text"].append(f"--- Forwarded email: {name}")
+        out["text_sources"].append(name)
+        for child in children:
+            _collect(svc, msg_id, child, out, container=name, depth=depth + 1)
+        return
+
+    if filename:
+        doc_mime = mail_parts.document_mime(filename, mime)
+        if doc_mime:
+            data = _part_data(svc, msg_id, part)
+            if data and not mail_parts.too_small(doc_mime, data):
+                name = f"{container} > {filename}" if container else filename
+                out["documents"].append({"filename": name, "mime_type": doc_mime, "data": data, "size": len(data)})
+            return
+        if mail_parts.is_text(filename, mime):
+            text = mail_parts.text_attachment(filename, _part_data(svc, msg_id, part))
+            if text:
+                out["attached_text"].append(text)
+                out["text_sources"].append(filename)
+            return
+        out["skipped"].append(filename)
+        return
+
+    if mime in ("text/plain", "text/html") and (part.get("body") or {}).get("data"):
+        raw = mail_parts.decode_text(_part_data(svc, msg_id, part))
+        text = raw.strip() if mime == "text/plain" else mail_parts.strip_html(raw)
+        key = container or ""
+        if text and key not in out["seen_text"]:
+            out["seen_text"].add(key)
+            if container:
+                out["attached_text"].append(text[: mail_parts.MAX_TEXT_CHARS])
+            else:
+                out["body_text"] = text
+    for child in children:
+        _collect(svc, msg_id, child, out, container, depth)
 
 
 def list_messages(svc, query: str, max_messages: int = 10) -> list[str]:
@@ -155,47 +216,8 @@ def fetch_message(svc, msg_id: str) -> dict:
     payload = msg.get("payload", {})
     headers = payload.get("headers", [])
 
-    parts: list[dict] = []
-    _walk_parts(payload, parts)
-
-    body_text = ""
-    body_html = ""
-    attachments: list[dict] = []
-
-    for part in parts:
-        mime = (part.get("mimeType") or "").lower()
-        filename = part.get("filename") or ""
-        body = part.get("body", {}) or {}
-
-        if filename:
-            ext = os.path.splitext(filename)[1].lower()
-            if mime not in SUPPORTED_MIME:
-                mime = EXT_TO_MIME.get(ext, mime)
-            if mime not in SUPPORTED_MIME:
-                continue
-            if body.get("attachmentId"):
-                att = (
-                    svc.users()
-                    .messages()
-                    .attachments()
-                    .get(userId="me", messageId=msg_id, id=body["attachmentId"])
-                    .execute()
-                )
-                data = _b64url_decode(att.get("data", ""))
-            elif body.get("data"):
-                data = _b64url_decode(body["data"])
-            else:
-                continue
-            if mime.startswith("image/") and len(data) < MIN_IMAGE_BYTES:
-                continue
-            attachments.append({"filename": filename, "mime_type": mime, "data": data, "size": len(data)})
-        elif mime == "text/plain" and body.get("data") and not body_text:
-            body_text = _b64url_decode(body["data"]).decode("utf-8", errors="replace")
-        elif mime == "text/html" and body.get("data") and not body_html:
-            body_html = _b64url_decode(body["data"]).decode("utf-8", errors="replace")
-
-    if not body_text and body_html:
-        body_text = _strip_html(body_html)
+    out: dict = {"body_text": "", "attached_text": [], "documents": [], "skipped": [], "text_sources": [], "seen_text": set()}
+    _collect(svc, msg_id, payload, out)
 
     internal_ms = int(msg.get("internalDate", "0") or 0)
     received_at = (
@@ -213,8 +235,13 @@ def fetch_message(svc, msg_id: str) -> dict:
         "date": _header(headers, "Date"),
         "received_at": received_at,
         "snippet": msg.get("snippet", ""),
-        "body_text": body_text[:4000],
-        "attachments": attachments,
+        "body_text": out["body_text"][:4000],
+        # Forwarded emails and text attachments (timesheets, schedules): read, not sent as documents.
+        "attached_text": "\n\n".join(out["attached_text"])[:12000],
+        "attachments": out["documents"],
+        # Where the text came from, for the decisions list; the documents above are what Claude is shown as files.
+        "text_sources": out["text_sources"],
+        "skipped_attachments": out["skipped"],
         "label_ids": msg.get("labelIds", []),
     }
 
