@@ -5,7 +5,7 @@
   Permissions-Policy: geolocation=(), microphone=(), camera=(), interest-cohort=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
 
-# Static assets are safe to cache hard - change the filename to bust.
+# Static assets are safe to cache hard - bump the ?v= query in the HTML (or rename the file) to bust.
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 

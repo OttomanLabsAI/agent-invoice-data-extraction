@@ -65,6 +65,14 @@
       <div class="field"><label for="vendor_id">Sage vendor ID<small>from Settings › Vendor map</small></label>
         <input id="vendor_id" name="vendor_id" type="text" value="{{ vendor_id }}" placeholder="e.g. V0123">
         {% if (sage.matched or {}).vendor_key %}<div class="hint">Matched “{{ sage.matched.vendor_key }}” in the vendor map.</div>{% endif %}</div>
+      {% if invoice_types %}
+      <div class="field"><label for="invoice_type">Invoice type<small>from the Invoice types tab</small></label>
+        <select id="invoice_type" name="invoice_type">
+          <option value="" {{ 'selected' if not chosen_type }}>Automatic{% if sage.invoice_type and not chosen_type %} - {{ sage.invoice_type.name }}{% endif %}</option>
+          {% for t in invoice_types %}<option value="{{ t.id }}" {{ 'selected' if chosen_type == t.id }}>{{ t.name }}</option>{% endfor %}
+        </select>
+        {% if sage.invoice_type %}<div class="hint">{{ sage.invoice_type.name }}: {{ sage.invoice_type.how }}. The type sets the GL and VAT coding, CIS and retention defaults, and which checks apply; <a href="{{ url_for('invoice_types_page') }}#type-{{ sage.invoice_type.id }}">edit it</a>.</div>{% endif %}</div>
+      {% endif %}
       <div class="field"><label for="invoice_number">Invoice number</label><input id="invoice_number" name="invoice_number" type="text" value="{{ rec.invoice_number or '' }}"></div>
       <div class="field"><label>Dates</label>
         <div class="row"><input name="invoice_date" type="date" value="{{ rec.invoice_date or '' }}" aria-label="Invoice date"><input name="due_date" type="date" value="{{ rec.due_date or (sage.bill or {}).WHENDUE or '' }}" aria-label="Due date"></div>

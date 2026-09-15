@@ -32,7 +32,7 @@
       <button class="btn" type="submit">Process upload</button>
     </form>
     <form method="post" action="{{ url_for('run_now') }}" class="inline">
-      <button class="btn primary" type="submit" {% if not (claude_ready and gmail_connected) %}disabled{% endif %}>Check inbox now</button>
+      <button class="btn primary" type="submit" title="Classifies new mail, then extracts the invoices" {% if not (claude_ready and gmail_connected) %}disabled{% endif %}>Check inbox now</button>
     </form>
   </div>
 </div>

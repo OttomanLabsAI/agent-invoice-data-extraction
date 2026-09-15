@@ -256,6 +256,40 @@ def _label_id(svc, name: str) -> str:
     return label_id
 
 
+def search_label(name: str) -> str:
+    """Gmail search wants label names with spaces and slashes as hyphens."""
+    return re.sub(r"[\s/]+", "-", (name or "").strip())
+
+
+def add_labels(svc, msg_id: str, label_names: list[str]) -> None:
+    ids = [_label_id(svc, name) for name in label_names if name]
+    if ids:
+        svc.users().messages().modify(userId="me", id=msg_id, body={"addLabelIds": ids}).execute()
+
+
+class Mailbox:
+    """The few Gmail operations the agents need, bound to one service. Tests replace connect() with a fake."""
+
+    def __init__(self, svc):
+        self.svc = svc
+
+    def list(self, query: str, max_messages: int = 10) -> list[str]:
+        return list_messages(self.svc, query, max_messages)
+
+    def fetch(self, msg_id: str) -> dict:
+        return fetch_message(self.svc, msg_id)
+
+    def add_labels(self, msg_id: str, label_names: list[str]) -> None:
+        add_labels(self.svc, msg_id, label_names)
+
+    def mark_processed(self, msg_id: str, label_name: str) -> None:
+        mark_processed(self.svc, msg_id, label_name)
+
+
+def connect() -> Mailbox:
+    return Mailbox(service())
+
+
 def mark_processed(svc, msg_id: str, label_name: str) -> None:
     body = {"removeLabelIds": ["UNREAD"]}
     if label_name:

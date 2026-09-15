@@ -13,6 +13,8 @@ import re
 
 import anthropic
 
+from . import rag
+
 MAX_ATTACHMENT_BYTES = 30 * 1024 * 1024
 
 LINE_CATEGORIES = ["labour", "materials", "plant", "subcontract", "services", "expenses", "other"]
@@ -159,7 +161,49 @@ INVOICE_TOOL = {
 }
 
 
-def system_prompt(company_name: str, default_currency: str) -> str:
+def _reference_section(reference_text: str) -> str:
+    text = (reference_text or "").strip()
+    if not text:
+        return ""
+    return (
+        "\n\nReference notes from the accounts team. Treat them as authoritative background (supplier names, project codes, "
+        "house conventions, examples); the document itself is still the source of truth for what is printed on it:\n---\n"
+        + text
+        + "\n---"
+    )
+
+
+CLASSIFY_TOOL = {
+    "name": "label_email",
+    "description": "Decide whether this email is a supplier invoice, credit note or application for payment that the accounts team must process.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "verdict": {"type": "string", "enum": ["invoice", "not_invoice"]},
+            "document_kind": {
+                "type": "string",
+                "description": "What the email and its attachments actually are: invoice, credit note, application for payment, statement, remittance advice, quote, purchase order, delivery note, marketing, personal, other.",
+            },
+            "confidence": {"type": "number", "description": "0 to 1."},
+            "reason": {"type": "string", "description": "One sentence for the accounts team explaining the decision."},
+        },
+        "required": ["verdict", "document_kind", "confidence", "reason"],
+    },
+}
+
+
+def classification_system_prompt(company_name: str, reference_text: str = "") -> str:
+    return f"""You are the mailbox classifier for {company_name}, a UK construction contractor. Suppliers and subcontractors email a shared accounts mailbox. Read each email and its attachments and decide whether it carries a document the accounts team must process as a purchase invoice.
+
+Count as an invoice: supplier invoices, credit notes, applications for payment (AFPs / payment applications from subcontractors), pro-forma invoices that are due for payment, and invoices arriving as images or scans.
+Do not count: statements of account, remittance advices, quotes and estimates, purchase orders, order acknowledgements, delivery notes and tickets, timesheets, marketing, newsletters, personal mail, internal mail, and anything with no readable document at all.
+
+Judge from the attachments first and the email text second. An email whose only attachment is a logo or signature image carries no document. If an email contains both an invoice and other paperwork, it counts as an invoice.
+
+Use the label_email tool for your answer: verdict, what kind of document it is, your confidence and a one-sentence reason.{_reference_section(reference_text)}"""
+
+
+def system_prompt(company_name: str, default_currency: str, reference_text: str = "") -> str:
     return f"""You are the accounts payable assistant for {company_name}, a UK construction contractor delivering MEP and civils packages on data-centre and infrastructure projects. Suppliers and subcontractors email their invoices to a shared mailbox; your job is to read each document and capture exactly what the accounts team keys into Sage Intacct when posting an AP bill.
 
 Extract every field you can read directly from the document. Never invent a value: if something is not printed, leave it null and add a flag. Specifically:
@@ -174,19 +218,25 @@ Extract every field you can read directly from the document. Never invent a valu
 - If the file is not an invoice or credit note (a statement, remittance advice, quote, delivery note, marketing), set document_type accordingly and keep the rest minimal.
 - If a file contains more than one invoice, extract the first and flag that others exist.
 
-Use the record_invoice tool for your answer."""
+Use the record_invoice tool for your answer.{_reference_section(reference_text)}"""
+
+
+def media_block(attachment: bytes, mime_type: str) -> dict:
+    data = base64.standard_b64encode(attachment).decode("ascii")
+    if mime_type == "application/pdf":
+        return {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": data}}
+    return {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": data}}
 
 
 def build_content(attachment: bytes, mime_type: str, context_text: str) -> list[dict]:
-    data = base64.standard_b64encode(attachment).decode("ascii")
-    if mime_type == "application/pdf":
-        media_block = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": data}}
-    else:
-        media_block = {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": data}}
-    return [
-        media_block,
-        {"type": "text", "text": context_text},
-    ]
+    return [media_block(attachment, mime_type), {"type": "text", "text": context_text}]
+
+
+def _email_query(meta: dict | None, attachments: list[dict] | None = None) -> str:
+    meta = meta or {}
+    parts = [meta.get("from"), meta.get("subject"), meta.get("attachment_name"), meta.get("body_text")]
+    parts += [a.get("filename") for a in (attachments or [])]
+    return "\n".join(str(p) for p in parts if p)
 
 
 def email_context(meta: dict | None) -> str:
@@ -228,16 +278,18 @@ def extract_invoice(
     company_name: str = "Glent Group",
     default_currency: str = "GBP",
     email_meta: dict | None = None,
+    reference_text: str = "",
 ) -> tuple[dict, dict]:
     """Return (extracted_record, usage). Raises anthropic errors on API failure."""
     if len(attachment) > MAX_ATTACHMENT_BYTES:
         raise ValueError("Attachment is larger than 30 MB; split it or compress it first.")
 
+    notes = rag.retrieve(reference_text, _email_query(email_meta))
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model=model,
         max_tokens=8000,
-        system=system_prompt(company_name, default_currency),
+        system=system_prompt(company_name, default_currency, notes),
         tools=[INVOICE_TOOL],
         tool_choice={"type": "auto"},
         messages=[{"role": "user", "content": build_content(attachment, mime_type, email_context(email_meta))}],
@@ -262,6 +314,81 @@ def extract_invoice(
         "model": response.model,
     }
     return normalise(record), usage
+
+
+CLASSIFY_MAX_ATTACHMENTS = 3
+CLASSIFY_MAX_TOTAL_BYTES = 12 * 1024 * 1024
+
+
+def _classification_context(meta: dict, attachments: list[dict]) -> str:
+    listed = "; ".join(f"{a['filename']} ({a['mime_type']}, {round(a.get('size', 0) / 1024)} KB)" for a in attachments) or "none"
+    body = (meta.get("body_text") or meta.get("snippet") or "").strip()
+    return "\n".join([
+        f"From: {meta.get('from', '')}",
+        f"To: {meta.get('to', '')}",
+        f"Subject: {meta.get('subject', '')}",
+        f"Date: {meta.get('date') or meta.get('received_at') or ''}",
+        f"Attachments: {listed}",
+        "Email body:\n" + (body[:3000] if body else "(empty)"),
+        "Decide with the label_email tool.",
+    ])
+
+
+def classify_email(
+    api_key: str,
+    model: str,
+    email_meta: dict,
+    attachments: list[dict],
+    company_name: str = "Glent Group",
+    reference_text: str = "",
+) -> dict:
+    """Return {verdict, document_kind, confidence, reason, usage}. Raises anthropic errors on API failure."""
+    notes = rag.retrieve(reference_text, _email_query(email_meta, attachments))
+    content: list[dict] = []
+    total = 0
+    for att in attachments[:CLASSIFY_MAX_ATTACHMENTS]:
+        if total + att.get("size", len(att["data"])) > CLASSIFY_MAX_TOTAL_BYTES:
+            break
+        total += att.get("size", len(att["data"]))
+        content.append(media_block(att["data"], att["mime_type"]))
+    content.append({"type": "text", "text": _classification_context(email_meta, attachments)})
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model=model,
+        max_tokens=600,
+        system=classification_system_prompt(company_name, notes),
+        tools=[CLASSIFY_TOOL],
+        tool_choice={"type": "auto"},
+        messages=[{"role": "user", "content": content}],
+    )
+    record: dict | None = None
+    text_parts: list[str] = []
+    for block in response.content:
+        if block.type == "tool_use" and block.name == CLASSIFY_TOOL["name"]:
+            record = dict(block.input)
+            break
+        if block.type == "text":
+            text_parts.append(block.text)
+    if record is None:
+        record = _parse_text_json("\n".join(text_parts))
+    if not record or record.get("verdict") not in ("invoice", "not_invoice"):
+        raise ValueError("The model did not return a verdict.")
+    try:
+        confidence = max(0.0, min(1.0, float(record.get("confidence") or 0)))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return {
+        "verdict": record["verdict"],
+        "document_kind": str(record.get("document_kind") or "")[:80],
+        "confidence": confidence,
+        "reason": str(record.get("reason") or "")[:400],
+        "usage": {
+            "input_tokens": getattr(response.usage, "input_tokens", 0) or 0,
+            "output_tokens": getattr(response.usage, "output_tokens", 0) or 0,
+            "model": response.model,
+        },
+    }
 
 
 # --------------------------------------------------------------------------- Normalisation

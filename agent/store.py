@@ -46,10 +46,28 @@ CREATE TABLE IF NOT EXISTS invoices (
 );
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stage TEXT NOT NULL DEFAULT 'inbox',
     started_at TEXT NOT NULL,
     finished_at TEXT,
     summary TEXT,
     ok INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS classifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    gmail_message_id TEXT UNIQUE,
+    from_addr TEXT,
+    subject TEXT,
+    received_at TEXT,
+    attachments TEXT DEFAULT '',
+    verdict TEXT NOT NULL,
+    document_kind TEXT DEFAULT '',
+    confidence REAL DEFAULT 0,
+    reason TEXT DEFAULT '',
+    label_applied TEXT DEFAULT '',
+    model TEXT DEFAULT '',
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0
 );
 """
 
@@ -73,6 +91,10 @@ def connect():
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # Databases from the single-stage version have no stage column on runs.
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()]
+        if "stage" not in columns:
+            conn.execute("ALTER TABLE runs ADD COLUMN stage TEXT NOT NULL DEFAULT 'inbox'")
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict | None:
@@ -172,9 +194,9 @@ def delete_invoice(invoice_id: int) -> None:
         conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
 
 
-def start_run() -> int:
+def start_run(stage: str = "inbox") -> int:
     with connect() as conn:
-        cur = conn.execute("INSERT INTO runs (started_at) VALUES (?)", (now_iso(),))
+        cur = conn.execute("INSERT INTO runs (stage, started_at) VALUES (?, ?)", (stage, now_iso()))
         return int(cur.lastrowid)
 
 
@@ -186,7 +208,48 @@ def finish_run(run_id: int, summary: str, ok: bool = True) -> None:
         )
 
 
-def last_run() -> dict | None:
+def last_run(stage: str | None = None) -> dict | None:
     with connect() as conn:
-        row = conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+        if stage:
+            row = conn.execute("SELECT * FROM runs WHERE stage = ? ORDER BY id DESC LIMIT 1", (stage,)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
     return dict(row) if row else None
+
+
+# --------------------------------------------------------------------------- classification log
+
+
+def record_classification(entry: dict) -> None:
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO classifications (created_at, gmail_message_id, from_addr, subject, received_at, attachments, verdict,
+                 document_kind, confidence, reason, label_applied, model, input_tokens, output_tokens)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(gmail_message_id) DO UPDATE SET created_at = excluded.created_at, verdict = excluded.verdict,
+                 document_kind = excluded.document_kind, confidence = excluded.confidence, reason = excluded.reason,
+                 label_applied = excluded.label_applied, model = excluded.model, input_tokens = excluded.input_tokens,
+                 output_tokens = excluded.output_tokens""",
+            (
+                now_iso(), entry.get("gmail_message_id"), entry.get("from_addr") or "", entry.get("subject") or "",
+                entry.get("received_at") or "", entry.get("attachments") or "", entry["verdict"], entry.get("document_kind") or "",
+                float(entry.get("confidence") or 0), entry.get("reason") or "", entry.get("label_applied") or "",
+                entry.get("model") or "", int(entry.get("input_tokens") or 0), int(entry.get("output_tokens") or 0),
+            ),
+        )
+
+
+def list_classifications(limit: int = 50) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM classifications ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def classification_counts() -> dict:
+    with connect() as conn:
+        rows = conn.execute("SELECT verdict, COUNT(*) AS n FROM classifications GROUP BY verdict").fetchall()
+    counts = {"invoice": 0, "not_invoice": 0}
+    for r in rows:
+        counts[r["verdict"]] = r["n"]
+    counts["total"] = counts["invoice"] + counts["not_invoice"]
+    return counts

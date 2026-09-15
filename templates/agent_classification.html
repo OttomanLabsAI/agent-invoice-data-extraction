@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Agent - Classification{% endblock %}
+{% block content %}
+
+<div class="pagehead">
+  <div>
+    <h1>Agent - Classification</h1>
+    <div class="meta">Reads new mail in the invoices mailbox and labels each email <code>{{ s.classify_invoice_label }}</code> or <code>{{ s.classify_other_label or '(nothing)' }}</code>. It decides only; the extraction agent does the reading of invoice data.
+      {% if not claude_ready %}Needs the Claude API key from <a href="{{ url_for('settings_page') }}">Settings</a> before it can run.
+      {% elif not connected %}Needs Gmail connected in <a href="{{ url_for('settings_page') }}">Settings</a> before it can run.
+      {% elif last_run %}Last run {{ (last_run.finished_at or last_run.started_at) | shortdate }}{% if last_run.finished_at %} at {{ last_run.finished_at[11:16] }} UTC{% endif %}{% if last_run.summary %} · {{ last_run.summary }}{% endif %}
+      {% else %}Has not run yet.{% endif %}
+    </div>
+  </div>
+  <div class="actions">
+    <button class="btn" type="submit" form="classification-form">Save</button>
+    <button class="btn primary" type="submit" form="classification-form" name="action" value="run" {% if not (connected and claude_ready) %}disabled{% endif %}>Classify now</button>
+  </div>
+</div>
+
+<form id="classification-form" method="post" action="{{ url_for('agent_classification') }}" autocomplete="off">
+<section class="sheet">
+  <h2>AI model</h2>
+  <p class="help">Opus 5 is the default. Classification is a short call per email, so Sonnet 5 or Haiku 4.5 will do it for less if volume gets high. The key comes from Settings.</p>
+  <div class="field">
+    <label for="classify_model">Model</label>
+    <select id="classify_model" name="classify_model">
+      {% for value, label in models %}<option value="{{ value }}" {{ 'selected' if s.classify_model == value }}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+</section>
+
+<section class="sheet">
+  <h2>Reference text (RAG)</h2>
+  <p class="help">What the agent should know when deciding: which suppliers send applications for payment, senders whose mail is never an invoice, how statements and remittances from particular suppliers look, anything it has got wrong before. The relevant paragraphs are retrieved and added to the instructions for every email.</p>
+  <div class="field">
+    <label for="classify_reference_text">Reference text<small>RAG retrieval</small></label>
+    <div>
+      <textarea id="classify_reference_text" name="classify_reference_text" style="min-height:14rem" placeholder="Paste notes, lists and examples here. Blank lines separate paragraphs.">{{ s.classify_reference_text }}</textarea>
+      <div class="hint">{% if rag_info.chars %}Currently {{ '{:,}'.format(rag_info.chars) }} characters in {{ rag_info.paragraphs }} paragraph{{ '' if rag_info.paragraphs == 1 else 's' }} - {% if rag_info.whole %}sent whole with every email.{% else %}over the {{ '{:,}'.format(rag_info.max_chars) }}-character budget, so only the paragraphs that share words with each email are sent.{% endif %}{% else %}Empty - nothing is added to the prompt yet.{% endif %}</div>
+    </div>
+  </div>
+</section>
+
+<section class="sheet">
+  <h2>What it reads</h2>
+  <div class="field">
+    <label for="gmail_query">Search</label>
+    <input id="gmail_query" name="gmail_query" type="text" value="{{ s.gmail_query }}">
+    <div class="hint">Gmail search syntax. Emails already labelled by either agent are excluded automatically. Example: <code>has:attachment is:unread label:Invoices</code></div>
+  </div>
+  <div class="field">
+    <label for="gmail_allowed_senders">Only from<small>optional</small></label>
+    <input id="gmail_allowed_senders" name="gmail_allowed_senders" type="text" value="{{ s.gmail_allowed_senders }}" placeholder="@supplier.co.uk, accounts@another.com">
+    <div class="hint">Comma-separated addresses or domains. Blank means any sender. Mail from anyone else is labelled as not an invoice without being read.</div>
+  </div>
+  <div class="field">
+    <label for="gmail_max_messages">Per run</label>
+    <div><input id="gmail_max_messages" name="gmail_max_messages" type="number" min="1" max="100" value="{{ s.gmail_max_messages }}" style="max-width:8rem"><div class="hint">emails looked at per click</div></div>
+  </div>
+</section>
+
+<section class="sheet">
+  <h2>Labels it applies</h2>
+  <div class="field">
+    <label for="classify_invoice_label">Invoice label</label>
+    <input id="classify_invoice_label" name="classify_invoice_label" type="text" value="{{ s.classify_invoice_label }}">
+    <div class="hint">Added to every email judged to carry an invoice. The extraction agent reads exactly this label, so you can also apply it by hand in Gmail to push an email through. Created in the mailbox if it does not exist.</div>
+  </div>
+  <div class="field">
+    <label for="classify_other_label">Everything else</label>
+    <input id="classify_other_label" name="classify_other_label" type="text" value="{{ s.classify_other_label }}">
+    <div class="hint">Added to emails judged not to be invoices so they are never read twice. Leave blank to label nothing - then every run reads them again.</div>
+  </div>
+</section>
+<div class="actions"><button class="btn primary" type="submit">Save</button></div>
+</form>
+
+<section class="sheet" id="decisions">
+  <h2>Recent decisions</h2>
+  <p class="help">{% if counts.total %}{{ counts.total }} email{{ '' if counts.total == 1 else 's' }} classified so far: {{ counts.invoice }} invoice{{ '' if counts.invoice == 1 else 's' }}, {{ counts.not_invoice }} not.{% else %}Nothing classified yet.{% endif %}</p>
+  {% if recent %}
+  <table class="ledger">
+    <thead><tr><th>Received</th><th>From</th><th>Subject</th><th>Verdict</th><th class="num">Confidence</th><th>Reason</th></tr></thead>
+    <tbody>
+    {% for c in recent %}
+      <tr>
+        <td>{{ (c.received_at or c.created_at) | shortdate }}</td>
+        <td>{{ c.from_addr }}</td>
+        <td>{{ c.subject }}{% if c.attachments %}<span class="sub">{{ c.attachments }}</span>{% endif %}</td>
+        <td><span class="status {{ 'approved' if c.verdict == 'invoice' else 'not_invoice' }}">{{ 'Invoice' if c.verdict == 'invoice' else 'Not an invoice' }}</span>{% if c.document_kind %}<span class="sub">{{ c.document_kind }}</span>{% endif %}{% if c.label_applied %}<span class="sub">label: {{ c.label_applied }}</span>{% endif %}</td>
+        <td class="num">{{ ((c.confidence or 0) * 100) | round | int }}%</td>
+        <td>{{ c.reason }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}

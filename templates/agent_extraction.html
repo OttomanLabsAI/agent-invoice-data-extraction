@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Agent - Invoice Extraction{% endblock %}
+{% block content %}
+
+<div class="pagehead">
+  <div>
+    <h1>Agent - Invoice Extraction</h1>
+    <div class="meta">Reads every email labelled <code>{{ s.classify_invoice_label }}</code>, sends each PDF or image to Claude with the invoice record schema, maps the result to a Sage Intacct bill and files it in the <a href="{{ url_for('dashboard') }}">Inbox</a> for review.
+      {% if not claude_ready %}Needs the Claude API key from <a href="{{ url_for('settings_page') }}">Settings</a> before it can run.
+      {% elif not connected %}Needs Gmail connected in <a href="{{ url_for('settings_page') }}">Settings</a> before it can run.
+      {% elif last_run %}Last run {{ (last_run.finished_at or last_run.started_at) | shortdate }}{% if last_run.finished_at %} at {{ last_run.finished_at[11:16] }} UTC{% endif %}{% if last_run.summary %} · {{ last_run.summary }}{% endif %}
+      {% else %}Has not run yet.{% endif %}
+    </div>
+  </div>
+  <div class="actions">
+    <button class="btn" type="submit" form="extraction-form">Save</button>
+    <button class="btn primary" type="submit" form="extraction-form" name="action" value="run" {% if not (connected and claude_ready) %}disabled{% endif %}>Extract now</button>
+  </div>
+</div>
+
+<form id="extraction-form" method="post" action="{{ url_for('agent_extraction') }}" autocomplete="off">
+<section class="sheet">
+  <h2>AI model</h2>
+  <p class="help">Reads the whole document, so this is where model quality matters. Opus 5 is the default; Sonnet 5 is faster and cheaper and still plenty for most invoices. The key comes from Settings.</p>
+  <div class="field">
+    <label for="extract_model">Model</label>
+    <select id="extract_model" name="extract_model">
+      {% for value, label in models %}<option value="{{ value }}" {{ 'selected' if s.extract_model == value }}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+</section>
+
+<section class="sheet">
+  <h2>Reference text (RAG)</h2>
+  <p class="help">What the agent should know when reading an invoice: how particular suppliers word things, which references are project or site codes, CIS and retention conventions, application-for-payment layouts, examples of invoices it has misread. The relevant paragraphs are retrieved and added to the instructions for every document.</p>
+  <div class="field">
+    <label for="extract_reference_text">Reference text<small>RAG retrieval</small></label>
+    <div>
+      <textarea id="extract_reference_text" name="extract_reference_text" style="min-height:14rem" placeholder="Paste notes, lists and examples here. Blank lines separate paragraphs.">{{ s.extract_reference_text }}</textarea>
+      <div class="hint">{% if rag_info.chars %}Currently {{ '{:,}'.format(rag_info.chars) }} characters in {{ rag_info.paragraphs }} paragraph{{ '' if rag_info.paragraphs == 1 else 's' }} - {% if rag_info.whole %}sent whole with every document.{% else %}over the {{ '{:,}'.format(rag_info.max_chars) }}-character budget, so only the paragraphs that share words with each email are sent.{% endif %}{% else %}Empty - nothing is added to the prompt yet.{% endif %}</div>
+    </div>
+  </div>
+</section>
+
+<section class="sheet">
+  <h2>Mail handling</h2>
+  <div class="field">
+    <label>Reads label</label>
+    <div><code>{{ s.classify_invoice_label }}</code><div class="hint">Set on the <a href="{{ url_for('agent_classification') }}">classification agent</a>. Emails carrying it that have not been processed yet are read, {{ s.gmail_max_messages }} at most per run.</div></div>
+  </div>
+  <div class="field">
+    <label for="gmail_processed_label">Processed label</label>
+    <input id="gmail_processed_label" name="gmail_processed_label" type="text" value="{{ s.gmail_processed_label }}">
+    <div class="hint">Added to each email after its attachments are read, and the email is marked read, so nothing is extracted twice. Created if it does not exist.</div>
+  </div>
+  <div class="field">
+    <label for="poll_minutes">Automatic checks</label>
+    <div><input id="poll_minutes" name="poll_minutes" type="number" min="0" max="1440" value="{{ s.poll_minutes }}" style="max-width:8rem"><div class="hint">minutes between automatic runs of both agents while the app is open (0 = only when you click).</div></div>
+  </div>
+</section>
+
+<section class="sheet">
+  <h2>What it extracts</h2>
+  <p class="help">The record every document is read into. Totals are re-checked arithmetically after extraction; anything that cannot be mapped to Sage becomes a check on the invoice.</p>
+  <table class="ledger">
+    <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+    {% for name, desc, group in schema_rows %}
+      <tr><td><code>{{ name }}</code></td><td>{% if group %}<em>{{ desc or 'group' }}</em>{% else %}{{ desc }}{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+<div class="actions"><button class="btn primary" type="submit">Save</button></div>
+</form>
+
+<section class="sheet">
+  <h2>So far</h2>
+  <p class="help">{% if counts.total %}{{ counts.total }} document{{ '' if counts.total == 1 else 's' }} in the Inbox: {{ counts.review }} needing review, {{ counts.approved }} approved, {{ counts.posted }} posted, {{ counts.queried }} queried, {{ counts.not_invoice }} not invoices, {{ counts.error }} failed.{% else %}Nothing extracted yet. Run the classification agent first, or upload a PDF on the Inbox.{% endif %}</p>
+</section>
+{% endblock %}

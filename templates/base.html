@@ -11,6 +11,10 @@
     <a class="wordmark" href="{{ url_for('dashboard') }}">{{ company_name }} <span>invoice intake</span></a>
     <nav>
       <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint in ('dashboard', 'invoice_detail') else '' }}">Inbox</a>
+      <a href="{{ url_for('agent_tree') }}" class="{{ 'active' if request.endpoint == 'agent_tree' else '' }}">Agent tree</a>
+      <a href="{{ url_for('agent_classification') }}" class="{{ 'active' if request.endpoint == 'agent_classification' else '' }}">Agent - Classification</a>
+      <a href="{{ url_for('agent_extraction') }}" class="{{ 'active' if request.endpoint == 'agent_extraction' else '' }}">Agent - Invoice Extraction</a>
+      <a href="{{ url_for('invoice_types_page') }}" class="{{ 'active' if request.endpoint == 'invoice_types_page' else '' }}">Invoice types</a>
       <a href="{{ url_for('settings_page') }}" class="{{ 'active' if request.endpoint == 'settings_page' else '' }}">Settings</a>
     </nav>
   </header>

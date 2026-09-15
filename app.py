@@ -17,8 +17,9 @@ from flask import (
     Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for,
 )
 
-from agent import config, extractor, gmail_client, pipeline, sage_client, sage_mapper, store
+from agent import config, extractor, gmail_client, invoice_types, pipeline, rag, sage_client, sage_mapper, store
 from agent.extractor import DOCUMENT_TYPES, LINE_CATEGORIES, VAT_TREATMENTS
+from agent.invoice_types import EXPECTED_VAT, TYPE_SIGNALS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -52,6 +53,11 @@ def money_filter(value):
         return "-"
 
 
+@app.template_filter("model_label")
+def model_label_filter(value):
+    return config.model_label(value)
+
+
 @app.template_filter("shortdate")
 def shortdate_filter(value):
     if not value:
@@ -74,7 +80,7 @@ def dashboard():
         invoices=store.list_invoices(status),
         counts=store.status_counts(),
         active_status=status,
-        last_run=store.last_run(),
+        last_run=store.last_run("inbox"),
         gmail_connected=gmail_client.GOOGLE_TOKEN_PATH.exists(),
         claude_ready=config.has_claude(settings),
     )
@@ -129,6 +135,7 @@ def _get_or_404(invoice_id: int) -> dict:
 @app.route("/invoice/<int:invoice_id>")
 def invoice_detail(invoice_id: int):
     invoice = _get_or_404(invoice_id)
+    settings = config.load_settings()
     sage = invoice.get("sage") or {}
     bill = sage.get("bill") or {}
     overrides = (invoice.get("extracted") or {}).get("sage_overrides") or {}
@@ -146,6 +153,8 @@ def invoice_detail(invoice_id: int):
         categories=LINE_CATEGORIES,
         vat_treatments=VAT_TREATMENTS,
         document_types=DOCUMENT_TYPES,
+        invoice_types=settings.get("invoice_types") or [],
+        chosen_type=overrides.get("invoice_type") or "",
     )
 
 
@@ -216,10 +225,13 @@ def invoice_save(invoice_id: int):
     overrides = {
         "vendor_id": form.get("vendor_id", "").strip(),
         "project_id": form.get("project_id", "").strip(),
+        "invoice_type": form.get("invoice_type", "").strip(),
     }
+    settings = config.load_settings()
+    kind, _ = invoice_types.resolve_type(rec, settings, overrides)
+    rec, _ = invoice_types.apply_type_defaults(rec, kind)
     rec["sage_overrides"] = overrides
 
-    settings = config.load_settings()
     mapped = pipeline.remap({**invoice, "extracted": rec}, settings, overrides=overrides)
     store.update_invoice(invoice_id, extracted=rec, sage=mapped, issues=mapped["issues"], notes=form.get("notes", ""))
     flash("Saved. Sage payload rebuilt.", "ok")
@@ -336,29 +348,25 @@ def settings_page():
     if request.method == "POST":
         form = request.form
         for key in (
-            "anthropic_api_key", "claude_model", "google_client_id", "google_client_secret", "gmail_query",
-            "gmail_allowed_senders", "gmail_processed_label", "company_name", "default_currency", "sage_endpoint",
+            "anthropic_api_key", "google_client_id", "google_client_secret", "company_name", "default_currency", "sage_endpoint",
             "sage_sender_id", "sage_sender_password", "sage_company_id", "sage_user_id", "sage_user_password",
             "sage_action", "sage_location_id", "sage_department_id", "sage_tax_solution_id", "sage_default_gl",
             "sage_cis_gl", "sage_retention_gl",
         ):
             if key in form:
                 settings[key] = form.get(key, "").strip()
-        for key, default in (("gmail_max_messages", 10), ("poll_minutes", 0)):
-            try:
-                settings[key] = max(0, int(form.get(key, default) or 0))
-            except ValueError:
-                settings[key] = default
-        settings["gl_map"] = {cat: form.get(f"gl_{cat}", "").strip() for cat in LINE_CATEGORIES}
-        settings["vat_detail_map"] = {
-            "20": form.get("vat_20", "").strip(),
-            "5": form.get("vat_5", "").strip(),
-            "0": form.get("vat_0", "").strip(),
-            "reverse_charge": form.get("vat_rc", "").strip(),
-        }
-        settings["vendor_map"] = config.parse_map(form.get("vendor_map", ""))
-        settings["project_map"] = config.parse_map(form.get("project_map", ""))
-        settings["terms_map"] = config.parse_map(form.get("terms_map", ""))
+        if "gl_labour" in form:
+            settings["gl_map"] = {cat: form.get(f"gl_{cat}", "").strip() for cat in LINE_CATEGORIES}
+        if "vat_20" in form:
+            settings["vat_detail_map"] = {
+                "20": form.get("vat_20", "").strip(),
+                "5": form.get("vat_5", "").strip(),
+                "0": form.get("vat_0", "").strip(),
+                "reverse_charge": form.get("vat_rc", "").strip(),
+            }
+        for key in ("vendor_map", "project_map", "terms_map"):
+            if key in form:
+                settings[key] = config.parse_map(form.get(key, ""))
         config.save_settings(settings)
         if form.get("action") == "connect_gmail":
             return redirect(url_for("gmail_connect"))
@@ -371,6 +379,7 @@ def settings_page():
         models=config.CLAUDE_MODELS,
         gmail=gmail_client.connection_status() if gmail_client.GOOGLE_TOKEN_PATH.exists() else {"connected": False},
         categories=LINE_CATEGORIES,
+        generic_codes=config.GENERIC_CODES,
         vendor_map_text=config.format_map(settings.get("vendor_map")),
         project_map_text=config.format_map(settings.get("project_map")),
         terms_map_text=config.format_map(settings.get("terms_map")),
@@ -402,6 +411,181 @@ def test_sage():
         return jsonify(ok=False, message="Fill in all five Intacct fields first.")
     ok, message = sage_client.test_connection(probe)
     return jsonify(ok=ok, message=message)
+
+
+# --------------------------------------------------------------------------- Agents
+
+
+def _int_field(form, key: str, default: int, minimum: int = 0) -> int:
+    try:
+        return max(minimum, int(form.get(key, default) or 0))
+    except ValueError:
+        return default
+
+
+def _gmail_status() -> dict:
+    if not gmail_client.GOOGLE_TOKEN_PATH.exists():
+        return {"connected": False, "email": None, "error": None}
+    return gmail_client.connection_status()
+
+
+@app.route("/agents")
+def agent_tree():
+    settings = config.load_settings()
+    return render_template(
+        "agent_tree.html",
+        s=settings,
+        gmail=_gmail_status(),
+        claude_ready=config.has_claude(settings),
+        sage_ready=config.has_sage(settings),
+        classify_run=store.last_run("classify"),
+        extract_run=store.last_run("extract"),
+        class_counts=store.classification_counts(),
+        invoice_counts=store.status_counts(),
+    )
+
+
+@app.route("/agents/classification", methods=["GET", "POST"])
+def agent_classification():
+    settings = config.load_settings()
+    if request.method == "POST":
+        form = request.form
+        for key in ("classify_model", "classify_reference_text", "classify_invoice_label", "classify_other_label", "gmail_query", "gmail_allowed_senders"):
+            if key in form:
+                settings[key] = form.get(key, "").strip()
+        if "gmail_max_messages" in form:
+            settings["gmail_max_messages"] = _int_field(form, "gmail_max_messages", 10, minimum=1)
+        if not settings["classify_invoice_label"]:
+            settings["classify_invoice_label"] = "Invoice Incoming"
+        config.save_settings(settings)
+        if form.get("action") == "run":
+            result = pipeline.classify_run(settings)
+            flash(result["message"], "ok" if result["ok"] else "error")
+        else:
+            flash("Classification agent saved.", "ok")
+        return redirect(url_for("agent_classification"))
+    return render_template(
+        "agent_classification.html",
+        s=settings,
+        models=config.CLAUDE_MODELS,
+        connected=gmail_client.GOOGLE_TOKEN_PATH.exists(),
+        claude_ready=config.has_claude(settings),
+        recent=store.list_classifications(50),
+        counts=store.classification_counts(),
+        last_run=store.last_run("classify"),
+        rag_info=rag.describe(settings.get("classify_reference_text")),
+    )
+
+
+def _schema_rows(schema: dict, prefix: str = "") -> list[tuple]:
+    rows: list[tuple] = []
+    for name, definition in (schema.get("properties") or {}).items():
+        path = f"{prefix}.{name}" if prefix else name
+        items = definition.get("items") if isinstance(definition.get("items"), dict) else {}
+        if definition.get("type") == "object" and definition.get("properties"):
+            rows.append((path, definition.get("description", ""), True))
+            rows += _schema_rows(definition, path)
+        elif definition.get("type") == "array" and items.get("properties"):
+            rows.append((path + "[]", definition.get("description", ""), True))
+            rows += _schema_rows(items, path + "[]")
+        else:
+            kind = definition.get("type")
+            kind = "/".join(t for t in kind if t != "null") if isinstance(kind, list) else (kind or "")
+            choice = f" one of: {', '.join(definition['enum'])}" if definition.get("enum") else ""
+            rows.append((path, (f"{definition.get('description', '')}{choice}").strip() or kind, False))
+    return rows
+
+
+@app.route("/agents/extraction", methods=["GET", "POST"])
+def agent_extraction():
+    settings = config.load_settings()
+    if request.method == "POST":
+        form = request.form
+        for key in ("extract_model", "extract_reference_text", "gmail_processed_label"):
+            if key in form:
+                settings[key] = form.get(key, "").strip()
+        if "poll_minutes" in form:
+            settings["poll_minutes"] = _int_field(form, "poll_minutes", 0)
+        config.save_settings(settings)
+        if form.get("action") == "run":
+            result = pipeline.extract_run(settings)
+            flash(result["message"], "ok" if result["ok"] else "error")
+        else:
+            flash("Extraction agent saved.", "ok")
+        return redirect(url_for("agent_extraction"))
+    return render_template(
+        "agent_extraction.html",
+        s=settings,
+        models=config.CLAUDE_MODELS,
+        connected=gmail_client.GOOGLE_TOKEN_PATH.exists(),
+        claude_ready=config.has_claude(settings),
+        last_run=store.last_run("extract"),
+        counts=store.status_counts(),
+        rag_info=rag.describe(settings.get("extract_reference_text")),
+        schema_rows=_schema_rows(extractor.INVOICE_TOOL["input_schema"]),
+    )
+
+
+# --------------------------------------------------------------------------- Invoice types
+
+
+def _read_type(form, t: dict) -> dict:
+    f = f"{t['id']}__"
+    if f + "name" not in form:
+        return t
+    return invoice_types.normalise_type({
+        "id": t["id"],
+        "name": form.get(f + "name", "").strip() or t["name"],
+        "description": form.get(f + "description", ""),
+        "suppliers": form.get(f + "suppliers", ""),
+        "categories": [c for c in LINE_CATEGORIES if f + "cat_" + c in form],
+        "signals": [k for k, _ in TYPE_SIGNALS if f + "sig_" + k in form],
+        "gl_map": {c: form.get(f + "gl_" + c, "").strip() for c in LINE_CATEGORIES},
+        "vat_detail_map": {"20": form.get(f + "vat_20", "").strip(), "5": form.get(f + "vat_5", "").strip(),
+                           "0": form.get(f + "vat_0", "").strip(), "reverse_charge": form.get(f + "vat_rc", "").strip()},
+        "cis_applies": f + "cis_applies" in form,
+        "cis_rate": form.get(f + "cis_rate", ""),
+        "retention_percent": form.get(f + "retention_percent", ""),
+        "terms_days": form.get(f + "terms_days", ""),
+        "po_required": f + "po_required" in form,
+        "project_required": f + "project_required" in form,
+        "expected_vat": form.get(f + "expected_vat", ""),
+        "location_id": form.get(f + "location_id", ""),
+        "department_id": form.get(f + "department_id", ""),
+        "sage_action": form.get(f + "sage_action", ""),
+    })
+
+
+@app.route("/types", methods=["GET", "POST"])
+def invoice_types_page():
+    settings = config.load_settings()
+    if request.method == "POST":
+        form = request.form
+        action = form.get("action", "")
+        types = [_read_type(form, t) for t in settings.get("invoice_types") or []]
+        anchor = ""
+        message = "Invoice types saved."
+        if action == "add":
+            new_id = invoice_types.new_type_id([t["id"] for t in types])
+            types.append(invoice_types.normalise_type({"id": new_id, "name": "New type"}))
+            anchor = f"#type-{new_id}"
+            message = "Type added - name it and save."
+        elif action.startswith("remove:"):
+            gone = next((t for t in types if t["id"] == action[7:]), None)
+            types = [t for t in types if t["id"] != action[7:]]
+            if gone:
+                message = f"Removed the {gone['name']} type."
+        settings["invoice_types"] = types
+        config.save_settings(settings)
+        flash(message, "ok")
+        return redirect(url_for("invoice_types_page") + anchor)
+    return render_template(
+        "invoice_types.html",
+        types=settings.get("invoice_types") or [],
+        categories=LINE_CATEGORIES,
+        signals=TYPE_SIGNALS,
+        expected_vat=EXPECTED_VAT,
+    )
 
 
 # --------------------------------------------------------------------------- Gmail OAuth

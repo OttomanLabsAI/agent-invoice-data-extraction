@@ -21,7 +21,7 @@
 <div class="pagehead">
   <div>
     <h1>Settings</h1>
-    <div class="meta">Keys are stored in <code>data/settings.json</code> on this machine only. Paste, reveal to check, save.</div>
+    <div class="meta">Keys are stored in <code>data/settings.json</code> on this machine only. Paste, reveal to check, save. Each agent picks its model and search on its own tab.</div>
   </div>
   <div class="actions"><button class="btn primary" type="submit" form="settings-form">Save settings</button></div>
 </div>
@@ -30,21 +30,15 @@
 
 <section class="sheet">
   <h2>Claude</h2>
-  <p class="help">Reads each invoice and fills in the fields. Get a key from the Claude Console; usage is billed per document (a typical two-page invoice is a few thousand tokens).</p>
+  <p class="help">Both agents use this key. Get it from the Claude Console; usage is billed per document (a typical two-page invoice is a few thousand tokens). Each agent picks its own model on its tab.</p>
   {{ secret('anthropic_api_key', 'API key', s.anthropic_api_key, placeholder='sk-ant-…') }}
-  <div class="field">
-    <label for="claude_model">Model</label>
-    <select id="claude_model" name="claude_model">
-      {% for value, label in models %}<option value="{{ value }}" {{ 'selected' if s.claude_model == value }}>{{ label }}</option>{% endfor %}
-    </select>
-  </div>
   <div class="field">
     <label></label>
     <div><button type="button" class="btn small" id="test-claude">Test key</button><div class="test-result" id="test-claude-result"></div></div>
   </div>
 </section>
 
-<section class="sheet">
+<section class="sheet" id="gmail">
   <h2>Gmail</h2>
   <p class="help">
     In Google Cloud Console create a project, enable the <strong>Gmail API</strong>, then under <em>APIs &amp; Services › Credentials</em> create an <strong>OAuth client ID</strong> of type <strong>Desktop app</strong>. Paste its client ID and secret here, save, then connect. If you choose <em>Web application</em> instead, add <code>{{ redirect_uri }}</code> as an authorised redirect URI. While the consent screen is in testing mode, add the mailbox as a test user.
@@ -68,26 +62,8 @@
     </div>
   </div>
   <div class="field">
-    <label for="gmail_query">Search</label>
-    <input id="gmail_query" name="gmail_query" type="text" value="{{ s.gmail_query }}">
-    <div class="hint">Gmail search syntax. Processed mail is excluded automatically by the label below. Example: <code>has:attachment is:unread label:Invoices</code></div>
-  </div>
-  <div class="field">
-    <label for="gmail_allowed_senders">Only from<small>optional</small></label>
-    <input id="gmail_allowed_senders" name="gmail_allowed_senders" type="text" value="{{ s.gmail_allowed_senders }}" placeholder="@supplier.co.uk, accounts@another.com">
-    <div class="hint">Comma-separated addresses or domains. Blank means any sender.</div>
-  </div>
-  <div class="field">
-    <label for="gmail_processed_label">Processed label</label>
-    <input id="gmail_processed_label" name="gmail_processed_label" type="text" value="{{ s.gmail_processed_label }}">
-    <div class="hint">Added to each email after it is read, so it is never picked up twice. Created if it does not exist.</div>
-  </div>
-  <div class="field">
-    <label>Per run</label>
-    <div class="row">
-      <div><input id="gmail_max_messages" name="gmail_max_messages" type="number" min="1" max="100" value="{{ s.gmail_max_messages }}"><div class="hint">emails per check</div></div>
-      <div><input id="poll_minutes" name="poll_minutes" type="number" min="0" max="1440" value="{{ s.poll_minutes }}"><div class="hint">minutes between automatic checks (0 = only when you click)</div></div>
-    </div>
+    <label>What is read</label>
+    <div class="hint" style="grid-column:2;margin-top:0.4rem">The search, sender filter and labels live on the two agent tabs: <a href="{{ url_for('agent_classification') }}">Classification</a> decides which mail carries invoices, <a href="{{ url_for('agent_extraction') }}">Invoice Extraction</a> reads them.</div>
   </div>
 </section>
 
@@ -97,7 +73,7 @@
   <div class="field"><label for="default_currency">Base currency</label><input id="default_currency" name="default_currency" type="text" value="{{ s.default_currency }}" style="max-width:8rem"></div>
 </section>
 
-<section class="sheet">
+<section class="sheet" id="sage">
   <h2>Sage Intacct connection</h2>
   <p class="help">Optional. With these filled in, an approved invoice can be posted straight into Intacct as an AP bill. Without them the app still gives you the bill ready to key in, plus JSON/XML/CSV downloads. Web Services must be enabled on the Intacct company and the sender ID authorised for it.</p>
   <div class="field"><label for="sage_endpoint">Endpoint</label><input id="sage_endpoint" name="sage_endpoint" type="text" value="{{ s.sage_endpoint }}"></div>
@@ -121,9 +97,9 @@
 
 <section class="sheet">
   <h2>Sage coding</h2>
-  <p class="help">How extracted lines become Intacct fields. IDs must match what exists in your Intacct company exactly - copy them from the vendor, GL account, project and tax detail lists there.</p>
-  <div class="field"><label for="sage_location_id">Location ID</label><input id="sage_location_id" name="sage_location_id" type="text" value="{{ s.sage_location_id }}" style="max-width:14rem"></div>
-  <div class="field"><label for="sage_department_id">Department ID</label><input id="sage_department_id" name="sage_department_id" type="text" value="{{ s.sage_department_id }}" style="max-width:14rem"></div>
+  <p class="help">The company-wide coding. The <a href="{{ url_for('invoice_types_page') }}">Invoice types</a> tab overrides GL accounts, VAT details, location and department per kind of invoice; blanks there fall back to what is here. The values shown to begin with are generic starting points for a UK contractor paying subcontractors and suppliers: Sage-style nominal codes and Intacct's standard UK VAT tax detail names. IDs must match what exists in your Intacct company exactly - copy them from the vendor, GL account, project and tax detail lists there, because Intacct rejects a bill whose account, vendor or tax detail it does not know.</p>
+  <div class="field"><label for="sage_location_id">Location ID</label><input id="sage_location_id" name="sage_location_id" type="text" value="{{ s.sage_location_id }}" placeholder="e.g. LON" style="max-width:14rem"><div class="hint">Blank is fine unless the Intacct company runs several locations; a wrong one makes Intacct reject the bill.</div></div>
+  <div class="field"><label for="sage_department_id">Department ID</label><input id="sage_department_id" name="sage_department_id" type="text" value="{{ s.sage_department_id }}" placeholder="e.g. MEP" style="max-width:14rem"></div>
   <div class="field"><label for="sage_tax_solution_id">Tax solution</label><input id="sage_tax_solution_id" name="sage_tax_solution_id" type="text" value="{{ s.sage_tax_solution_id }}" style="max-width:20rem"></div>
 
   <div class="field">
@@ -139,7 +115,7 @@
         <div><label for="sage_cis_gl" style="font-size:0.85rem;color:var(--ink-soft)">CIS control</label><input id="sage_cis_gl" name="sage_cis_gl" type="text" value="{{ s.sage_cis_gl }}"></div>
         <div><label for="sage_retention_gl" style="font-size:0.85rem;color:var(--ink-soft)">retention control</label><input id="sage_retention_gl" name="sage_retention_gl" type="text" value="{{ s.sage_retention_gl }}"></div>
       </div>
-      <div class="hint">CIS deductions and retentions are added as negative lines to the control accounts when set; otherwise they are flagged for manual posting.</div>
+      <div class="hint">CIS deductions and retentions are added as negative lines to the control accounts when set; otherwise they are flagged for manual posting. Generic codes: {% for code, meaning in generic_codes %}{{ code }} {{ meaning }}{{ ' · ' if not loop.last }}{% endfor %}.</div>
     </div>
   </div>
 
@@ -163,12 +139,12 @@
   <div class="field">
     <label for="vendor_map">Vendor map<small>supplier name = vendor ID</small></label>
     <textarea id="vendor_map" name="vendor_map" placeholder="Kingspan Insulation Ltd = V0042&#10;Speedy Hire = V0117">{{ vendor_map_text }}</textarea>
-    <div class="hint">Matching ignores case, punctuation and Ltd/Limited/PLC. Anything unmatched is flagged on the invoice, where you can type the ID directly.</div>
+    <div class="hint">Matching ignores case, punctuation and Ltd/Limited/PLC. Anything unmatched is flagged on the invoice, where you can type the ID directly. The entry shown to begin with is the fictional supplier on the sample invoice - remove it once real suppliers are in.</div>
   </div>
   <div class="field">
     <label for="project_map">Project map<small>site or PO prefix = project ID</small></label>
     <textarea id="project_map" name="project_map" placeholder="HEL18 = P-HEL18&#10;AMS01 = P-AMS01">{{ project_map_text }}</textarea>
-    <div class="hint">Matched against the project reference, PO number, site address and email subject.</div>
+    <div class="hint">Matched against the project reference, PO number, site address and email subject. HEL18 is the fictional project on the sample invoice.</div>
   </div>
 </section>
 

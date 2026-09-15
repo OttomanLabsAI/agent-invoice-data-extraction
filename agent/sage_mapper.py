@@ -12,35 +12,11 @@ Outputs:
 
 from __future__ import annotations
 
-import re
 from datetime import date, datetime, timedelta
 from xml.sax.saxutils import escape
 
-LEGAL_SUFFIXES = r"\b(ltd|limited|plc|llp|llc|inc|co|company|uk|group|holdings|services|the)\b"
-
-
-def _norm(name: str | None) -> str:
-    text = (name or "").lower()
-    text = re.sub(r"[^a-z0-9 ]+", " ", text)
-    text = re.sub(LEGAL_SUFFIXES, " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _lookup(mapping: dict, *candidates: str | None) -> tuple[str, str]:
-    """Return (value, matched_key). Exact normalised match first, then containment either way."""
-    if not mapping:
-        return "", ""
-    normalised = {_norm(k): (k, v) for k, v in mapping.items() if k and v}
-    cands = [_norm(c) for c in candidates if c]
-    for cand in cands:
-        if cand in normalised:
-            key, value = normalised[cand]
-            return value, key
-    for cand in cands:
-        for nkey, (key, value) in normalised.items():
-            if len(nkey) >= 3 and (nkey in cand or cand in nkey):
-                return value, key
-    return "", ""
+from .invoice_types import effective_coding, resolve_type
+from .match import lookup as _lookup
 
 
 def _money(value) -> float:
@@ -83,6 +59,8 @@ def build(rec: dict, settings: dict, email_meta: dict | None = None, overrides: 
     supplier = rec.get("supplier") or {}
     supplier_name = supplier.get("name") or ""
     currency = (rec.get("currency") or settings.get("default_currency") or "GBP").upper()
+    kind, type_how = resolve_type(rec, settings, overrides)
+    coding = effective_coding(settings, kind)
 
     # ---- Vendor
     vendor_id = overrides.get("vendor_id") or ""
@@ -119,16 +97,18 @@ def build(rec: dict, settings: dict, email_meta: dict | None = None, overrides: 
             rec.get("project_reference"), rec.get("po_number"), rec.get("order_reference"),
             rec.get("site_address"), email_meta.get("subject"),
         )
-    if not project_id and (settings.get("project_map") or {}):
+    if not project_id and kind and kind.get("project_required"):
+        issues.append(f"No Sage project - {kind['name']} invoices are project costs. Add the project ID on the invoice or in Settings > Project map.")
+    elif not project_id and (settings.get("project_map") or {}):
         notes.append("No project matched - bill will post without a project dimension.")
 
     # ---- Lines
-    gl_map = settings.get("gl_map") or {}
-    vat_map = settings.get("vat_detail_map") or {}
+    gl_map = coding["gl_map"]
+    vat_map = coding["vat_detail_map"]
     reverse_charge = (rec.get("vat_treatment") == "reverse_charge")
     sign = -1 if is_credit else 1
-    location_id = settings.get("sage_location_id") or ""
-    department_id = settings.get("sage_department_id") or ""
+    location_id = coding["location_id"]
+    department_id = coding["department_id"]
 
     items = []
     missing_gl = set()
@@ -207,8 +187,17 @@ def build(rec: dict, settings: dict, email_meta: dict | None = None, overrides: 
         notes.append("Domestic reverse charge - no VAT is paid to the supplier; Sage posts the input and output VAT.")
     if not rec.get("totals_reconcile", True):
         issues.append("Totals on the document do not add up - check the lines against the PDF.")
-    if not rec.get("po_number"):
+    po_missing = not (overrides.get("po_number") or rec.get("po_number"))
+    if po_missing and kind and kind.get("po_required"):
+        issues.append(f"No purchase order number - {kind['name']} invoices need one.")
+    elif po_missing:
         notes.append("No purchase order number on the invoice.")
+    if kind and not is_credit:
+        if kind.get("expected_vat") == "reverse_charge" and not reverse_charge:
+            treatment = (rec.get("vat_treatment") or "unknown").replace("_", " ")
+            notes.append(f"{kind['name']} invoices usually fall under the domestic reverse charge; this one shows {treatment} VAT. Check before posting.")
+        elif kind.get("expected_vat") == "standard" and reverse_charge:
+            notes.append(f"{kind['name']} invoices are not usually reverse charged. Check the VAT treatment before posting.")
     if doc_type not in ("invoice", "credit_note"):
         issues.append(f"Document looks like a {doc_type.replace('_', ' ')}, not an invoice.")
     for flag in rec.get("flags") or []:
@@ -231,7 +220,7 @@ def build(rec: dict, settings: dict, email_meta: dict | None = None, overrides: 
         "TERMNAME": term_name,
         "BASECURR": settings.get("default_currency") or "GBP",
         "CURRENCY": currency,
-        "ACTION": settings.get("sage_action") or "Draft",
+        "ACTION": coding["sage_action"],
         "TAXSOLUTIONID": settings.get("sage_tax_solution_id") or "",
         "ITEMS": items,
     }
@@ -250,6 +239,7 @@ def build(rec: dict, settings: dict, email_meta: dict | None = None, overrides: 
     entry_sheet = {
         "header": [
             ("Vendor", vendor_id or "(not mapped)", supplier_name),
+            ("Invoice type", kind["name"] if kind else "(none)", type_how if kind else ""),
             ("Bill date", invoice_date, ""),
             ("Due date", due_date, term_name and f"terms: {term_name}"),
             ("Bill number", record_id, "supplier's invoice number"),
@@ -282,6 +272,7 @@ def build(rec: dict, settings: dict, email_meta: dict | None = None, overrides: 
         "Sage vendor ID": vendor_id,
         "Invoice no": record_id,
         "Type": doc_type.replace("_", " "),
+        "Invoice type": kind["name"] if kind else "",
         "Invoice date": invoice_date,
         "Due date": due_date,
         "PO no": po_number,
@@ -310,6 +301,7 @@ def build(rec: dict, settings: dict, email_meta: dict | None = None, overrides: 
         "entry_sheet": entry_sheet,
         "log_row": log_row,
         "matched": {"vendor_key": matched_vendor_key, "project_key": matched_project_key},
+        "invoice_type": {"id": kind["id"], "name": kind["name"], "how": type_how} if kind else None,
     }
 
 
@@ -371,7 +363,7 @@ def public_bill(bill: dict) -> dict:
 
 
 LOG_COLUMNS = [
-    "Date received", "Supplier", "Sage vendor ID", "Invoice no", "Type", "Invoice date", "Due date", "PO no",
+    "Date received", "Supplier", "Sage vendor ID", "Invoice no", "Type", "Invoice type", "Invoice date", "Due date", "PO no",
     "Project", "Description", "Currency", "Net", "VAT", "Gross", "VAT treatment", "CIS deduction", "Retention",
     "Amount payable", "Supplier VAT no", "Status", "Sage record no", "Email from", "Email subject", "Attachment",
     "Confidence", "Checks",

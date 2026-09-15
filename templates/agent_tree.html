@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Agent tree{% endblock %}
+{% block content %}
+
+{% macro node(href, name, lines, stat, kind='') -%}
+<a class="node {{ kind }}" href="{{ href }}">
+  <span class="name">{{ name }}</span>
+  {% for line in lines if line %}<span class="meta">{{ line }}</span>{% endfor %}
+  {% if stat %}<span class="stat">{{ stat }}</span>{% endif %}
+</a>
+{%- endmacro %}
+
+{% macro run_line(run) -%}
+  {%- if run -%}Last run {{ (run.finished_at or run.started_at) | shortdate }}{% if run.finished_at %} {{ run.finished_at[11:16] }} UTC{% endif %}{%- else -%}Not run yet{%- endif -%}
+{%- endmacro %}
+
+{% macro plural(n, word) %}{{ n }} {{ word }}{% if n != 1 %}s{% endif %}{% endmacro %}
+
+<div class="pagehead">
+  <div>
+    <h1>Agent tree</h1>
+    <div class="meta">How an email travels through the agents. Click a box to open it; the red-edged boxes are the agents.</div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('agent_classification') }}">Open classification</a>
+    <a class="btn" href="{{ url_for('agent_extraction') }}">Open extraction</a>
+  </div>
+</div>
+
+<div class="tree">
+  <ul>
+    <li>{{ node(url_for('settings_page') ~ '#gmail', 'Gmail mailbox',
+          [('Connected as ' ~ gmail.email) if gmail.connected else ('Token problem - reconnect in Settings' if gmail.error else 'Not connected - open Settings'),
+           'Claude key in place' if claude_ready else 'No Claude API key yet'],
+          'search: ' ~ (s.gmail_query or 'has:attachment is:unread')) }}
+      <ul>
+        <li><span class="edge">new mail matching the search</span>{{ node(url_for('agent_classification'), 'Agent - Classification',
+              [s.classify_model | model_label, run_line(classify_run)],
+              (plural(class_counts.total, 'email') ~ ' classified: ' ~ plural(class_counts.invoice, 'invoice') ~ ', ' ~ class_counts.not_invoice ~ ' not') if class_counts.total else 'Nothing classified yet', 'agent') }}
+          <ul>
+            <li><span class="edge">labels “{{ s.classify_invoice_label }}”</span>{{ node(url_for('agent_extraction'), 'Agent - Invoice Extraction',
+                  [s.extract_model | model_label, run_line(extract_run)],
+                  (plural(invoice_counts.total, 'document') ~ ' read, ' ~ invoice_counts.error ~ ' failed') if invoice_counts.total else 'Nothing extracted yet', 'agent') }}
+              <ul>
+                <li><span class="edge">files each document, labels “{{ s.gmail_processed_label or 'processed' }}”</span>{{ node(url_for('dashboard'), 'Inbox - review',
+                      ['Check the fields and the Key into Sage sheet, then approve'],
+                      invoice_counts.review ~ ' needing review · ' ~ invoice_counts.approved ~ ' approved · ' ~ invoice_counts.queried ~ ' queried') }}
+                  <ul>
+                    <li><span class="edge">approve, then post or key in</span>{{ node(url_for('settings_page') ~ '#sage', 'Sage Intacct',
+                          ['Connected - approved bills can be posted as Draft' if sage_ready else 'Not connected - key in from the entry sheet, or download JSON / XML / CSV'],
+                          plural(invoice_counts.posted, 'bill') ~ ' posted or keyed in') }}</li>
+                  </ul>
+                </li>
+              </ul>
+            </li>
+            <li><span class="edge">labels “{{ s.classify_other_label or '(nothing)' }}”</span>{{ node(url_for('agent_classification') ~ '#decisions', 'Stops here',
+                  ['Statements, remittances, quotes and the rest stay in the mailbox with this label'],
+                  plural(class_counts.not_invoice, 'email') ~ ' so far', 'leaf') }}</li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+  </ul>
+</div>
+{% endblock %}

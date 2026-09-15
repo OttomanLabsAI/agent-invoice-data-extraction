@@ -40,3 +40,12 @@ pre.cmd { background: var(--paper); border: 1px solid var(--rule); padding: 0.7r
 .versions select { flex: 1 1 18rem; max-width: 30rem; }
 .btn.disabled { opacity: 0.45; pointer-events: none; }
 .field .btn { display: inline-block; }
+
+/* The agent tree inside a sheet: keep the app's tree spacing, not the sheet's list spacing. */
+.sheet .tree ul { margin: 0; padding: 1.8rem 0 0; }
+.sheet .tree > ul { padding-top: 0; }
+.sheet .tree li { margin-bottom: 0; }
+.sheet .tree + p { margin-top: 0.6rem; }
+.agents { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.2rem 2rem; margin-top: 1rem; }
+.agents h3 { margin: 0 0 0.4rem; }
+.agents p { margin: 0 0 0.5rem; }
