@@ -71,6 +71,7 @@ def process_attachment(
             default_currency=settings.get("default_currency") or "GBP",
             email_meta=meta,
             reference_text=settings.get("extract_reference_text") or "",
+            system_template=settings.get("extract_system_prompt") or "",
         )
     except Exception as exc:  # noqa: BLE001 - recorded on the row
         log.error("Extraction failed for %s: %s", filename, exc)
@@ -162,6 +163,7 @@ def classify_run(settings: dict, limit: int | None = None) -> dict:
                     attachments=meta["attachments"],
                     company_name=settings.get("company_name") or "Glent Group",
                     reference_text=settings.get("classify_reference_text") or "",
+                    system_template=settings.get("classify_system_prompt") or "",
                 )
             except Exception as exc:  # noqa: BLE001 - left unlabelled so the next run tries again
                 log.error("Classification failed for %s: %s", msg_id, exc)

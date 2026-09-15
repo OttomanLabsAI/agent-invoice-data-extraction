@@ -14,6 +14,7 @@ import re
 import anthropic
 
 from . import rag
+from .prompts import CLASSIFY_SYSTEM, EXTRACT_SYSTEM, fill
 
 MAX_ATTACHMENT_BYTES = 30 * 1024 * 1024
 
@@ -192,33 +193,14 @@ CLASSIFY_TOOL = {
 }
 
 
-def classification_system_prompt(company_name: str, reference_text: str = "") -> str:
-    return f"""You are the mailbox classifier for {company_name}, a UK construction contractor. Suppliers and subcontractors email a shared accounts mailbox. Read each email and its attachments and decide whether it carries a document the accounts team must process as a purchase invoice.
-
-Count as an invoice: supplier invoices, credit notes, applications for payment (AFPs / payment applications from subcontractors), pro-forma invoices that are due for payment, and invoices arriving as images or scans.
-Do not count: statements of account, remittance advices, quotes and estimates, purchase orders, order acknowledgements, delivery notes and tickets, timesheets, marketing, newsletters, personal mail, internal mail, and anything with no readable document at all.
-
-Judge from the attachments first and the email text second. An email whose only attachment is a logo or signature image carries no document. If an email contains both an invoice and other paperwork, it counts as an invoice.
-
-Use the label_email tool for your answer: verdict, what kind of document it is, your confidence and a one-sentence reason.{_reference_section(reference_text)}"""
+def classification_system_prompt(company_name: str, reference_text: str = "", template: str | None = None) -> str:
+    """The classification agent's system prompt: its instructions (the shipped text unless edited on its tab) plus the reference notes."""
+    return fill(template or CLASSIFY_SYSTEM, company_name=company_name) + _reference_section(reference_text)
 
 
-def system_prompt(company_name: str, default_currency: str, reference_text: str = "") -> str:
-    return f"""You are the accounts payable assistant for {company_name}, a UK construction contractor delivering MEP and civils packages on data-centre and infrastructure projects. Suppliers and subcontractors email their invoices to a shared mailbox; your job is to read each document and capture exactly what the accounts team keys into Sage Intacct when posting an AP bill.
-
-Extract every field you can read directly from the document. Never invent a value: if something is not printed, leave it null and add a flag. Specifically:
-- Dates: output YYYY-MM-DD. If only payment terms are printed (e.g. "30 days"), derive due_date from invoice_date and say so in a flag.
-- Amounts: plain numbers, no currency symbols or thousands separators. Default currency {default_currency} unless the document clearly shows another.
-- Lines: capture every billable line with its net amount and VAT rate. Classify each line as labour, materials, plant, subcontract, services, expenses or other. A subcontractor's "supply and fit" line is subcontract; hire of equipment is plant; consumables and deliveries are materials.
-- UK VAT: identify the treatment. If the invoice says "reverse charge", "domestic reverse charge applies", "customer to pay VAT to HMRC" or shows VAT at 0 with a reverse-charge note, set vat_treatment to reverse_charge and vat_total to 0 (the VAT is accounted for by the customer).
-- CIS: if the invoice separates labour and materials, or shows a CIS deduction, or the supplier is clearly a subcontractor doing site work, fill the cis block. Materials are never subject to CIS deduction.
-- Retention: capture any retention percentage or amount withheld.
-- References: purchase order numbers, delivery notes, project or site codes and contract references matter a lot for coding the bill - capture every one you can see.
-- Check the arithmetic: lines should sum to net_total and net_total + vat_total should equal gross_total. If they do not, still record what is printed and set totals_reconcile to false with a flag explaining the difference.
-- If the file is not an invoice or credit note (a statement, remittance advice, quote, delivery note, marketing), set document_type accordingly and keep the rest minimal.
-- If a file contains more than one invoice, extract the first and flag that others exist.
-
-Use the record_invoice tool for your answer.{_reference_section(reference_text)}"""
+def system_prompt(company_name: str, default_currency: str, reference_text: str = "", template: str | None = None) -> str:
+    """The extraction agent's system prompt: its instructions (the shipped text unless edited on its tab) plus the reference notes."""
+    return fill(template or EXTRACT_SYSTEM, company_name=company_name, default_currency=default_currency) + _reference_section(reference_text)
 
 
 def media_block(attachment: bytes, mime_type: str) -> dict:
@@ -279,6 +261,7 @@ def extract_invoice(
     default_currency: str = "GBP",
     email_meta: dict | None = None,
     reference_text: str = "",
+    system_template: str | None = None,
 ) -> tuple[dict, dict]:
     """Return (extracted_record, usage). Raises anthropic errors on API failure."""
     if len(attachment) > MAX_ATTACHMENT_BYTES:
@@ -289,7 +272,7 @@ def extract_invoice(
     response = client.messages.create(
         model=model,
         max_tokens=8000,
-        system=system_prompt(company_name, default_currency, notes),
+        system=system_prompt(company_name, default_currency, notes, system_template),
         tools=[INVOICE_TOOL],
         tool_choice={"type": "auto"},
         messages=[{"role": "user", "content": build_content(attachment, mime_type, email_context(email_meta))}],
@@ -320,7 +303,8 @@ CLASSIFY_MAX_ATTACHMENTS = 3
 CLASSIFY_MAX_TOTAL_BYTES = 12 * 1024 * 1024
 
 
-def _classification_context(meta: dict, attachments: list[dict]) -> str:
+def classification_context(meta: dict, attachments: list[dict]) -> str:
+    """The note that goes with each email's attachments (also shown on the agent's tab)."""
     listed = "; ".join(f"{a['filename']} ({a['mime_type']}, {round(a.get('size', 0) / 1024)} KB)" for a in attachments) or "none"
     body = (meta.get("body_text") or meta.get("snippet") or "").strip()
     return "\n".join([
@@ -341,6 +325,7 @@ def classify_email(
     attachments: list[dict],
     company_name: str = "Glent Group",
     reference_text: str = "",
+    system_template: str | None = None,
 ) -> dict:
     """Return {verdict, document_kind, confidence, reason, usage}. Raises anthropic errors on API failure."""
     notes = rag.retrieve(reference_text, _email_query(email_meta, attachments))
@@ -351,13 +336,13 @@ def classify_email(
             break
         total += att.get("size", len(att["data"]))
         content.append(media_block(att["data"], att["mime_type"]))
-    content.append({"type": "text", "text": _classification_context(email_meta, attachments)})
+    content.append({"type": "text", "text": classification_context(email_meta, attachments)})
 
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model=model,
         max_tokens=600,
-        system=classification_system_prompt(company_name, notes),
+        system=classification_system_prompt(company_name, notes, system_template),
         tools=[CLASSIFY_TOOL],
         tool_choice={"type": "auto"},
         messages=[{"role": "user", "content": content}],

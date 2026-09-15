@@ -30,15 +30,58 @@
   </div>
 </section>
 
-<section class="sheet">
+<section class="sheet" id="prompt">
+  <h2>Instructions to the AI</h2>
+  <p class="help">The prompt the model is given, word for word, with every document. Edit it here if it keeps getting something wrong; <em>Restore default</em> brings the shipped wording back. {% for key, meaning in placeholders.items() %}<code>{{ '{' ~ key ~ '}' }}</code> is {{ meaning }}{{ ', ' if not loop.last else '.' }}{% endfor %}</p>
+  <div class="field">
+    <label for="extract_system_prompt">System prompt</label>
+    <div>
+      <textarea id="extract_system_prompt" name="extract_system_prompt" class="prompt" spellcheck="false">{{ s.extract_system_prompt }}</textarea>
+      <div class="hint restore">
+        <button class="btn small" type="submit" name="action" value="reset_prompt" formnovalidate{% if prompt_is_default %} disabled{% endif %} onclick="return confirm('Put the default instructions back? Your edits to the prompt will be lost.')">Restore default</button>
+        <span>{% if prompt_is_default %}This is the shipped wording.{% else %}Edited from the shipped wording. Restore puts the default back and saves.{% endif %} Saving with an empty box also puts the default back.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sheet" id="reference">
   <h2>Reference text (RAG)</h2>
-  <p class="help">What the agent should know when reading an invoice: how particular suppliers word things, which references are project or site codes, CIS and retention conventions, application-for-payment layouts, examples of invoices it has misread. The relevant paragraphs are retrieved and added to the instructions for every document.</p>
+  <p class="help">Your own notes, added to the instructions above for every document: what the agent cannot know from the prompt alone. Empty to start with. One note per paragraph, blank lines between them; once the text outgrows the budget only the paragraphs that share words with each email are sent.</p>
   <div class="field">
     <label for="extract_reference_text">Reference text<small>RAG retrieval</small></label>
     <div>
-      <textarea id="extract_reference_text" name="extract_reference_text" style="min-height:14rem" placeholder="Paste notes, lists and examples here. Blank lines separate paragraphs.">{{ s.extract_reference_text }}</textarea>
+      <textarea id="extract_reference_text" name="extract_reference_text" style="min-height:12rem" placeholder="Nothing here yet. Add notes like the examples below - one per paragraph.">{{ s.extract_reference_text }}</textarea>
       <div class="hint">{% if rag_info.chars %}Currently {{ '{:,}'.format(rag_info.chars) }} characters in {{ rag_info.paragraphs }} paragraph{{ '' if rag_info.paragraphs == 1 else 's' }} - {% if rag_info.whole %}sent whole with every document.{% else %}over the {{ '{:,}'.format(rag_info.max_chars) }}-character budget, so only the paragraphs that share words with each email are sent.{% endif %}{% else %}Empty - nothing is added to the prompt yet.{% endif %}</div>
     </div>
+  </div>
+  <div class="field">
+    <label>Examples of what to add</label>
+    <div>
+      <ul class="examples">
+        <li>HEL18 is the Helsinki data centre. Our purchase order numbers read GG-HEL18-00231: the code in the middle is the project reference.</li>
+        <li>Northbank Mechanical Services: applications for payment are cumulative - record the amount applied for this period, not the total to date. They are under the domestic reverse charge and CIS, with 3% retention held.</li>
+        <li>Speedy Hire invoices list each hire as a line with a week number; the delivery charge is expenses, not plant.</li>
+        <li>"Site cabin hire" and "welfare unit" lines are plant. "Attendance" lines from a subcontractor are labour.</li>
+        <li>Payment terms "net monthly account" mean 30 days from the end of the invoice month.</li>
+        <li>If the email body gives different bank details from the invoice, flag it as a possible payment-diversion fraud and keep the invoice's details.</li>
+        <li>Mistake to avoid: on 5 Sep it read the retention amount as a line item. Retention is never a line; it goes in the retention block.</li>
+      </ul>
+      <div class="hint">Project and site codes, how particular suppliers lay out their invoices, house rules for line categories and terms, and anything it has misread before, with the correct answer.</div>
+    </div>
+  </div>
+</section>
+
+<section class="sheet" id="preview">
+  <h2>What the AI receives</h2>
+  <p class="help">Exactly what goes to {{ s.extract_model | model_label }} for each document, as saved: the system prompt, then the PDF or image itself with the note below, and the <code>record_invoice</code> tool with the record listed under <em>What it extracts</em>.</p>
+  <div class="field">
+    <label>System prompt as sent</label>
+    <div><pre class="prompt">{{ preview_system }}</pre><div class="hint">The instructions with the placeholders filled in{% if rag_info.chars %}, then the reference text{% if not rag_info.whole %} (only the paragraphs matching each email){% endif %}{% endif %}.</div></div>
+  </div>
+  <div class="field">
+    <label>Then, with each document</label>
+    <div><pre class="prompt">{{ preview_note }}</pre><div class="hint">Shown for the sample invoice email. The email body is cut at 2,500 characters; a file dropped on the Inbox gets a one-line note instead.</div></div>
   </div>
 </section>
 

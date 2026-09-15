@@ -15,6 +15,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from .invoice_types import DEFAULT_TYPES, normalise_type
+from .prompts import CLASSIFY_SYSTEM, EXTRACT_SYSTEM
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 # Override with INVOICE_AGENT_DATA to keep keys/database somewhere else (e.g. a OneDrive folder).
@@ -58,6 +59,7 @@ DEFAULTS = {
     "anthropic_api_key": "",
     # Agent - Classification: reads new mail and labels invoices
     "classify_model": DEFAULT_MODEL,
+    "classify_system_prompt": CLASSIFY_SYSTEM,
     "classify_reference_text": "",
     "classify_invoice_label": "Invoice Incoming",
     "classify_other_label": "Not an invoice",
@@ -66,6 +68,7 @@ DEFAULTS = {
     "gmail_max_messages": 10,
     # Agent - Invoice Extraction: reads mail labelled as invoices and extracts the data
     "extract_model": DEFAULT_MODEL,
+    "extract_system_prompt": EXTRACT_SYSTEM,
     "extract_reference_text": "",
     "gmail_processed_label": "Invoices/Processed",
     "poll_minutes": 0,

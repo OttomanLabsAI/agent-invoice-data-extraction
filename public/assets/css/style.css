@@ -276,3 +276,10 @@ img.preview { object-fit: contain; height: auto; max-height: 560px; }
 .checks label { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--ink-soft); font-size: 0.9rem; white-space: nowrap; }
 .sheet .typehead { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding-bottom: 0.6rem; margin-bottom: 0.9rem; border-bottom: 1px solid var(--rule-strong); }
 .sheet .typehead h2 { padding: 0; margin: 0; border: 0; }
+
+/* ---------- Agent tabs: the prompt box, its restore line, the examples and the as-sent preview */
+textarea.prompt { min-height: 22rem; font-family: var(--mono); font-size: 0.8rem; line-height: 1.45; }
+.hint.restore { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.7rem; margin-top: 0.55rem; }
+.examples { margin: 0.1rem 0 0.4rem; padding-left: 1.1rem; }
+.examples li { font-family: var(--mono); font-size: 0.78rem; color: var(--ink-soft); margin: 0 0 0.4rem; }
+pre.prompt { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 26rem; overflow: auto; font-size: 0.8rem; line-height: 1.45; background: var(--paper); border: 1px solid var(--rule); padding: 0.7rem 0.9rem; }

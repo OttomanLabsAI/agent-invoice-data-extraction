@@ -6,8 +6,8 @@
   <title>Invoice intake · Glent Group</title>
   <meta name="description" content="The Glent Group invoice intake agent: two Claude agents read the supplier invoices in the accounts mailbox, fill in the details and prepare a Sage Intacct bill to check and post. Download the latest build or an older version.">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/css/style.css?v=3.1">
-  <link rel="stylesheet" href="/assets/css/site.css?v=3.1">
+  <link rel="stylesheet" href="/assets/css/style.css?v=3.2">
+  <link rel="stylesheet" href="/assets/css/site.css?v=3.2">
 </head>
 <body>
   <header class="topbar">
@@ -93,20 +93,20 @@
         <div id="classification">
           <h3>Agent - Classification</h3>
           <p>Reads the new mail that matches the search and decides, from the attachments first and the email text second, whether it carries a supplier invoice, credit note or application for payment. It labels each email so nothing is looked at twice, and lists every decision with its reason on its tab.</p>
-          <p>Its tab holds the model choice, the Gmail search, an optional sender filter, the two labels, and a reference text: which suppliers send applications for payment, senders whose mail is never an invoice, anything it has got wrong before.</p>
+          <p>Its tab holds the model choice, the instructions the AI is given (shown word for word, editable, with a Restore default button), the Gmail search, an optional sender filter, the two labels, and a reference text for your own notes: which suppliers send applications for payment, senders whose mail is never an invoice, anything it has got wrong before.</p>
         </div>
         <div id="extraction">
           <h3>Agent - Invoice Extraction</h3>
           <p>Reads every email labelled as an invoice, sends each PDF or image to Claude with the fixed invoice record, re-checks the arithmetic, matches the invoice to a type and maps it to a Sage Intacct bill in the Inbox.</p>
-          <p>Its tab holds the model choice, the processed label, the timer for automatic runs, and its own reference text: project and site codes, how particular suppliers word things, CIS and retention conventions. The record it fills in is listed field by field.</p>
+          <p>Its tab holds the model choice, its own instructions (editable, with a Restore default button), the processed label, the timer for automatic runs, and its own reference text: project and site codes, how particular suppliers word things, CIS and retention conventions. The record it fills in is listed field by field.</p>
         </div>
         <div id="types">
           <h3>Invoice types</h3>
           <p>Five generic types come filled in for a UK contractor - subcontractor, materials supplier, plant hire, professional services and overheads - each with its GL and VAT overrides, CIS and retention defaults, payment terms and its checks. An invoice is matched by supplier name, then by CIS, reverse charge or application-for-payment signals, then by what its lines mostly are; the review page can move it by hand.</p>
         </div>
         <div>
-          <h3>Reference text (RAG)</h3>
-          <p>Each agent's reference text is plain writing, pasted on its tab. A short text goes with every call; a long one is split into paragraphs and only those that share words with the email are sent, so notes can grow with every supplier and project without costing more per invoice.</p>
+          <h3>Prompts and reference text</h3>
+          <p>Nothing is hidden: each tab shows the prompt the AI is given and what is sent with each email, exactly as sent. The reference text is your own plain writing under it, empty to begin with, with examples of what to add. A short text goes with every call; a long one is split into paragraphs and only those that share words with the email are sent, so notes can grow with every supplier and project without costing more per invoice.</p>
         </div>
       </div>
     </section>
@@ -139,31 +139,31 @@
       <h2>The pages</h2>
       <div class="shots">
         <figure class="shot wide">
-          <a href="/assets/img/inbox.png?v=3.1"><img src="/assets/img/inbox.png?v=3.1" alt="The Inbox page: the last check of the mailbox, and a ledger table with two invoices from Northbank Mechanical Services, their net, VAT and gross totals, zero open checks and a Needs review status" width="1200" height="760" loading="lazy"></a>
+          <a href="/assets/img/inbox.png?v=3.2"><img src="/assets/img/inbox.png?v=3.2" alt="The Inbox page: the last check of the mailbox, and a ledger table with two invoices from Northbank Mechanical Services, their net, VAT and gross totals, zero open checks and a Needs review status" width="1200" height="760" loading="lazy"></a>
           <figcaption><strong>Inbox.</strong> Every document that came in, with its totals, the number of open checks and its status. <em>Check inbox now</em> runs both agents; the counters filter the list; <em>Download log CSV</em> sits at their right.</figcaption>
         </figure>
         <figure class="shot wide">
-          <a href="/assets/img/agent-tree.png?v=3.1"><img src="/assets/img/agent-tree.png?v=3.1" alt="The Agent tree page: boxes for the Gmail mailbox, the classification agent, the extraction agent, the Inbox and Sage Intacct, joined by lines labelled with what passes between them, each box showing its model, last run and counts" width="1200" height="1039" loading="lazy"></a>
+          <a href="/assets/img/agent-tree.png?v=3.2"><img src="/assets/img/agent-tree.png?v=3.2" alt="The Agent tree page: boxes for the Gmail mailbox, the classification agent, the extraction agent, the Inbox and Sage Intacct, joined by lines labelled with what passes between them, each box showing its model, last run and counts" width="1200" height="1039" loading="lazy"></a>
           <figcaption><strong>Agent tree.</strong> The mailbox, the two agents, the Inbox and Sage, with the labels that carry an email from one to the next. Each box shows its model, its last run and its counts; clicking one opens it.</figcaption>
         </figure>
         <figure class="shot">
-          <a href="/assets/img/classification.png?v=3.1"><img src="/assets/img/classification.png?v=3.1" alt="The Agent - Classification page: the result of a run, the model choice and the reference text box" width="1200" height="760" loading="lazy"></a>
-          <figcaption><strong>Agent - Classification.</strong> Model, reference text, the Gmail search and the labels it applies, with <em>Classify now</em> at the top and every recent decision listed below.</figcaption>
+          <a href="/assets/img/classification.png?v=3.2"><img src="/assets/img/classification.png?v=3.2" alt="The Agent - Classification page: the result of a run, the model choice and the reference text box" width="1200" height="760" loading="lazy"></a>
+          <figcaption><strong>Agent - Classification.</strong> Model, the instructions the AI is given with their <em>Restore default</em> button, the reference text, the Gmail search and the labels it applies, with <em>Classify now</em> at the top and every recent decision listed below.</figcaption>
         </figure>
         <figure class="shot">
-          <a href="/assets/img/extraction.png?v=3.1"><img src="/assets/img/extraction.png?v=3.1" alt="The Agent - Invoice Extraction page: the result of a run, the model choice and the reference text box" width="1200" height="760" loading="lazy"></a>
-          <figcaption><strong>Agent - Invoice Extraction.</strong> Model, reference text, the processed label and the timer, with <em>Extract now</em> at the top and the invoice record it fills in listed field by field.</figcaption>
+          <a href="/assets/img/extraction.png?v=3.2"><img src="/assets/img/extraction.png?v=3.2" alt="The Agent - Invoice Extraction page: the result of a run, the model choice and the reference text box" width="1200" height="760" loading="lazy"></a>
+          <figcaption><strong>Agent - Invoice Extraction.</strong> Model, its instructions with their <em>Restore default</em> button, the reference text, the processed label and the timer, with <em>Extract now</em> at the top and the invoice record it fills in listed field by field.</figcaption>
         </figure>
         <figure class="shot">
-          <a href="/assets/img/review.png?v=3.1"><img src="/assets/img/review.png?v=3.1" alt="The review page: the line editor on the left and the Key into Sage entry sheet on the right, showing the vendor, invoice type, dates, bill number, project and the coded lines" width="1200" height="760" loading="lazy"></a>
+          <a href="/assets/img/review.png?v=3.2"><img src="/assets/img/review.png?v=3.2" alt="The review page: the line editor on the left and the Key into Sage entry sheet on the right, showing the vendor, invoice type, dates, bill number, project and the coded lines" width="1200" height="760" loading="lazy"></a>
           <figcaption><strong>Review.</strong> The extracted data on the left is editable and the line editor recalculates new lines. On the right sits the <em>Key into Sage</em> sheet, in the order of Intacct's bill screen, with the invoice type that coded it.</figcaption>
         </figure>
         <figure class="shot">
-          <a href="/assets/img/invoice-types.png?v=3.1"><img src="/assets/img/invoice-types.png?v=3.1" alt="The Invoice types page: the Subcontractor type with its matching rules, GL account per line category and VAT tax details" width="1200" height="760" loading="lazy"></a>
+          <a href="/assets/img/invoice-types.png?v=3.2"><img src="/assets/img/invoice-types.png?v=3.2" alt="The Invoice types page: the Subcontractor type with its matching rules, GL account per line category and VAT tax details" width="1200" height="760" loading="lazy"></a>
           <figcaption><strong>Invoice types.</strong> One sheet per type: what it covers, how it is matched, its GL and VAT overrides, deductions, checks and posting options. Add your own or remove the ones you do not use.</figcaption>
         </figure>
         <figure class="shot wide">
-          <a href="/assets/img/settings.png?v=3.1"><img src="/assets/img/settings.png?v=3.1" alt="The Settings page: masked API key field with a reveal button and the Gmail OAuth client fields" width="1200" height="760" loading="lazy"></a>
+          <a href="/assets/img/settings.png?v=3.2"><img src="/assets/img/settings.png?v=3.2" alt="The Settings page: masked API key field with a reveal button and the Gmail OAuth client fields" width="1200" height="760" loading="lazy"></a>
           <figcaption><strong>Settings.</strong> Every key is pasted here and masked; the eye button reveals it so you can check a paste. <em>Connect Gmail</em> saves the page and opens Google's sign-in. The Sage coding below comes pre-filled with generic contractor codes.</figcaption>
         </figure>
       </div>
@@ -186,7 +186,7 @@
       <ol class="steps">
         <li><strong>Claude.</strong> Paste an API key from the Claude Console. <em>Test key</em> checks it without spending tokens. Both agents use this key; each picks its own model on its tab, Claude Opus 5 by default.</li>
         <li><strong>Gmail.</strong> In Google Cloud Console create a project, enable the <strong>Gmail API</strong>, create an <em>OAuth client ID</em> of type <em>Desktop app</em>, paste its client ID and secret, save, then click <strong>Connect Gmail</strong> and sign in as the invoices mailbox. If Google reports <code>redirect_uri_mismatch</code>, create the client as <em>Web application</em> instead and add the redirect URI shown on the Settings page.</li>
-        <li><strong>The agents.</strong> On <em>Agent - Classification</em> check the Gmail search and the labels, and paste what helps it decide. On <em>Agent - Invoice Extraction</em> paste what helps it read: project codes, supplier quirks. Both start with sensible defaults and empty reference text, so this step can wait until the first invoices have been through.</li>
+        <li><strong>The agents.</strong> On <em>Agent - Classification</em> check the Gmail search and the labels, and add what helps it decide. On <em>Agent - Invoice Extraction</em> add what helps it read: project codes, supplier quirks. Both start with sensible settings and the shipped instructions, so this step can wait until the first invoices have been through; the instructions themselves can be edited on the tab and put back with <em>Restore default</em>.</li>
         <li><strong>Sage coding.</strong> The Settings page comes filled with generic contractor codes: nominal accounts per line category, CIS and retention control accounts, Intacct's UK VAT tax detail names and payment terms. Replace them from your Intacct lists - vendor names to vendor IDs, GL accounts, tax details, project codes - and check the <em>Invoice types</em> tab does the same. Anything unmapped shows up as a check on the invoice, where you can type the ID directly.</li>
         <li><strong>Sage Intacct connection</strong> (optional). With Web Services credentials an approved invoice can be posted straight in as a draft bill. Without them everything still works: entry sheet, JSON, XML and CSV.</li>
       </ol>
@@ -199,6 +199,6 @@
       <span>The app runs locally. This site holds no data.</span>
     </footer>
   </main>
-  <script src="/assets/js/downloads.js?v=3.1"></script>
+  <script src="/assets/js/downloads.js?v=3.2"></script>
 </body>
 </html>

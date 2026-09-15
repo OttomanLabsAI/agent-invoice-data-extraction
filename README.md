@@ -47,7 +47,9 @@ If Google complains about `redirect_uri_mismatch`, create the client as *Web app
 
 **Agent - Invoice Extraction** - reads every email carrying the invoice label that has not been processed, sends each PDF or image attachment to Claude, and files the result in the Inbox. Processed emails are marked read and labelled `Invoices/Processed`. *Automatic checks* runs both agents every N minutes while the app is open (0 = only when you click).
 
-**Reference text (RAG)** - each agent has a text box for what it should know: which suppliers send applications for payment, senders whose mail is never an invoice, project and site codes, how particular suppliers word things, anything it has got wrong before. Blank lines separate paragraphs. A text under 16,000 characters is sent whole with every call; a longer one is searched paragraph by paragraph and only the paragraphs that share words with the email (sender, subject, body, attachment names) are sent, in their original order, within the budget. The tab reports the size and whether it is sent whole.
+**Instructions to the AI** - each agent's tab shows the prompt the model is given, word for word, and lets you edit it. *Restore default* brings the shipped wording back (so does saving an empty box). `{company_name}` and `{default_currency}` are filled in from Settings when the call is made. Below it, *What the AI receives* shows the prompt exactly as sent - instructions plus reference text - and the note that goes with each email, so there is no guessing what the model was told.
+
+**Reference text (RAG)** - each agent also has a text box for your own notes, added to the instructions: which suppliers send applications for payment, senders whose mail is never an invoice, project and site codes, how particular suppliers word things, anything it has got wrong before and the right answer. It starts empty; the tab lists examples of what to add. Blank lines separate paragraphs. A text under 16,000 characters is sent whole with every call; a longer one is searched paragraph by paragraph and only the paragraphs that share words with the email (sender, subject, body, attachment names) are sent, in their original order, within the budget. The tab reports the size and whether it is sent whole.
 
 **Sage Intacct** (Settings) - optional. With Web Services credentials (sender ID + password, company ID, user ID + password) an approved invoice can be posted straight in as an AP bill, as *Draft* by default so accounts can check it inside Intacct before it posts. Without them, everything still works: you get the entry sheet, JSON, the XML gateway body, and the CSV.
 
@@ -98,8 +100,9 @@ Statements, remittances, quotes and marketing PDFs are normally stopped by the c
 app.py                 Flask app and routes
 agent/config.py        settings defaults (generic Sage coding, both agents, invoice types) and storage (data/settings.json, 0600)
 agent/gmail_client.py  OAuth, message + attachment fetch, labelling, the Mailbox wrapper the agents use
-agent/extractor.py     Claude calls: label_email tool for classification, record_invoice tool for extraction
+agent/extractor.py     Claude calls: label_email tool for classification, record_invoice tool for extraction; prompts assembled from the templates
 agent/rag.py           reference text retrieval: whole text when short, matching paragraphs when long
+agent/prompts.py       the shipped system prompt for each agent, placeholder filling and the Restore default check
 agent/invoice_types.py the generic types, matching order, coding overrides and defaults
 agent/match.py         fuzzy name matching shared by the vendor / project maps and the types
 agent/sage_mapper.py   record → APBILL / APADJUSTMENT payload, XML, entry sheet, log row

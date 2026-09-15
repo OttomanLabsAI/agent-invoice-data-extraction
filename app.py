@@ -17,7 +17,7 @@ from flask import (
     Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for,
 )
 
-from agent import config, extractor, gmail_client, invoice_types, pipeline, rag, sage_client, sage_mapper, store
+from agent import config, extractor, gmail_client, invoice_types, pipeline, prompts, rag, sage_client, sage_mapper, store
 from agent.extractor import DOCUMENT_TYPES, LINE_CATEGORIES, VAT_TREATMENTS
 from agent.invoice_types import EXPECTED_VAT, TYPE_SIGNALS
 
@@ -423,6 +423,15 @@ def _int_field(form, key: str, default: int, minimum: int = 0) -> int:
         return default
 
 
+# The sample invoice email, used on the agent tabs to show the note that goes with each document.
+SAMPLE_EMAIL = {
+    "from": "accounts@northbankmech.co.uk", "to": "(the connected mailbox)", "subject": "Invoice NMS-2026-0417 - HEL18 Hall 2",
+    "date": "Mon, 8 Sep 2026 09:00:00 +0000", "attachment_name": "NMS-2026-0417.pdf",
+    "body_text": "Please find attached our application for payment no. 7 for August.",
+}
+SAMPLE_ATTACHMENTS = [{"filename": "NMS-2026-0417.pdf", "mime_type": "application/pdf", "size": 48 * 1024}]
+
+
 def _gmail_status() -> dict:
     if not gmail_client.GOOGLE_TOKEN_PATH.exists():
         return {"connected": False, "email": None, "error": None}
@@ -450,17 +459,26 @@ def agent_classification():
     settings = config.load_settings()
     if request.method == "POST":
         form = request.form
-        for key in ("classify_model", "classify_reference_text", "classify_invoice_label", "classify_other_label", "gmail_query", "gmail_allowed_senders"):
+        for key in ("classify_model", "classify_system_prompt", "classify_reference_text", "classify_invoice_label", "classify_other_label", "gmail_query", "gmail_allowed_senders"):
             if key in form:
-                settings[key] = form.get(key, "").strip()
+                settings[key] = prompts.clean(form.get(key))
         if "gmail_max_messages" in form:
             settings["gmail_max_messages"] = _int_field(form, "gmail_max_messages", 10, minimum=1)
         if not settings["classify_invoice_label"]:
             settings["classify_invoice_label"] = "Invoice Incoming"
+        emptied = "classify_system_prompt" in form and not settings["classify_system_prompt"]
+        if form.get("action") == "reset_prompt" or emptied:
+            settings["classify_system_prompt"] = prompts.CLASSIFY_SYSTEM
         config.save_settings(settings)
         if form.get("action") == "run":
             result = pipeline.classify_run(settings)
             flash(result["message"], "ok" if result["ok"] else "error")
+        elif form.get("action") == "reset_prompt":
+            flash("Instructions restored to the default.", "ok")
+            return redirect(url_for("agent_classification") + "#prompt")
+        elif emptied:
+            flash("Saved. The instructions cannot be empty, so the default text was put back.", "error")
+            return redirect(url_for("agent_classification") + "#prompt")
         else:
             flash("Classification agent saved.", "ok")
         return redirect(url_for("agent_classification"))
@@ -474,6 +492,12 @@ def agent_classification():
         counts=store.classification_counts(),
         last_run=store.last_run("classify"),
         rag_info=rag.describe(settings.get("classify_reference_text")),
+        prompt_is_default=prompts.is_default(settings.get("classify_system_prompt"), prompts.CLASSIFY_SYSTEM),
+        placeholders=prompts.PLACEHOLDERS,
+        preview_system=extractor.classification_system_prompt(
+            settings.get("company_name") or "Glent Group", settings.get("classify_reference_text") or "", settings.get("classify_system_prompt") or ""),
+        preview_note=extractor.classification_context(SAMPLE_EMAIL, SAMPLE_ATTACHMENTS),
+        tool=extractor.CLASSIFY_TOOL,
     )
 
 
@@ -501,15 +525,24 @@ def agent_extraction():
     settings = config.load_settings()
     if request.method == "POST":
         form = request.form
-        for key in ("extract_model", "extract_reference_text", "gmail_processed_label"):
+        for key in ("extract_model", "extract_system_prompt", "extract_reference_text", "gmail_processed_label"):
             if key in form:
-                settings[key] = form.get(key, "").strip()
+                settings[key] = prompts.clean(form.get(key))
         if "poll_minutes" in form:
             settings["poll_minutes"] = _int_field(form, "poll_minutes", 0)
+        emptied = "extract_system_prompt" in form and not settings["extract_system_prompt"]
+        if form.get("action") == "reset_prompt" or emptied:
+            settings["extract_system_prompt"] = prompts.EXTRACT_SYSTEM
         config.save_settings(settings)
         if form.get("action") == "run":
             result = pipeline.extract_run(settings)
             flash(result["message"], "ok" if result["ok"] else "error")
+        elif form.get("action") == "reset_prompt":
+            flash("Instructions restored to the default.", "ok")
+            return redirect(url_for("agent_extraction") + "#prompt")
+        elif emptied:
+            flash("Saved. The instructions cannot be empty, so the default text was put back.", "error")
+            return redirect(url_for("agent_extraction") + "#prompt")
         else:
             flash("Extraction agent saved.", "ok")
         return redirect(url_for("agent_extraction"))
@@ -522,6 +555,12 @@ def agent_extraction():
         last_run=store.last_run("extract"),
         counts=store.status_counts(),
         rag_info=rag.describe(settings.get("extract_reference_text")),
+        prompt_is_default=prompts.is_default(settings.get("extract_system_prompt"), prompts.EXTRACT_SYSTEM),
+        placeholders=prompts.PLACEHOLDERS,
+        preview_system=extractor.system_prompt(
+            settings.get("company_name") or "Glent Group", settings.get("default_currency") or "GBP",
+            settings.get("extract_reference_text") or "", settings.get("extract_system_prompt") or ""),
+        preview_note=extractor.email_context(SAMPLE_EMAIL),
         schema_rows=_schema_rows(extractor.INVOICE_TOOL["input_schema"]),
     )
 

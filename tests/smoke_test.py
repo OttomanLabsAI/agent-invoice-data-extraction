@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 TMP = Path(tempfile.mkdtemp(prefix="invoice-agent-test-"))
 os.environ["INVOICE_AGENT_DATA"] = str(TMP)
 
-from agent import config, extractor, gmail_client, invoice_types, pipeline, rag, sage_mapper, store  # noqa: E402
+from agent import config, extractor, gmail_client, invoice_types, pipeline, prompts, rag, sage_mapper, store  # noqa: E402
 
 SAMPLE_PDF = ROOT / "samples" / "sample-invoice.pdf"
 
@@ -234,6 +234,13 @@ def test_types_rag_and_config():
     info = rag.describe(long_text)
     check(info["chars"] == len(long_text.strip()) and info["paragraphs"] == 60 and info["whole"] is False, "describe reports size, paragraphs and whether it fits")
     check(rag.describe("")["chars"] == 0 and rag.retrieve("", "x") == "", "empty reference text is fine")
+    check(config.DEFAULTS["classify_reference_text"] == "" and config.DEFAULTS["extract_reference_text"] == "", "reference text starts empty")
+    check(config.DEFAULTS["classify_system_prompt"] == prompts.CLASSIFY_SYSTEM and config.DEFAULTS["extract_system_prompt"] == prompts.EXTRACT_SYSTEM and "{company_name}" in prompts.CLASSIFY_SYSTEM and "{default_currency}" in prompts.EXTRACT_SYSTEM, "the shipped prompts are the defaults, with placeholders")
+    check(extractor.classification_system_prompt("Glent Group", "", "Hi {company_name} {x}") == "Hi Glent Group {x}", "an edited prompt is used with the placeholder filled and other braces kept")
+    check(extractor.system_prompt("Glent Group", "GBP", "notes", "Pay in {default_currency}").startswith("Pay in GBP\n\nReference notes"), "an edited extraction prompt gets the currency and the reference notes")
+    check(extractor.classification_system_prompt("Glent Group", "", "") == prompts.fill(prompts.CLASSIFY_SYSTEM, company_name="Glent Group") and "classifier for Glent Group" in extractor.classification_system_prompt("Glent Group"), "a blank template falls back to the shipped prompt")
+    check(prompts.is_default(" " + prompts.CLASSIFY_SYSTEM.replace("\n", "\r\n") + "\n", prompts.CLASSIFY_SYSTEM) and not prompts.is_default("x", prompts.CLASSIFY_SYSTEM), "is_default ignores surrounding whitespace and CRLF line endings only")
+    check("NMS-2026-0417.pdf (application/pdf, 48 KB)" in extractor.classification_context({"from": "a", "subject": "s"}, [{"filename": "NMS-2026-0417.pdf", "mime_type": "application/pdf", "size": 48 * 1024}]), "the per-email note lists the attachments")
     check("Northbank" in extractor.system_prompt("Glent Group", "GBP", "Northbank notes") and "Reference notes" in extractor.classification_system_prompt("Glent Group", "x"), "reference notes land in both system prompts")
     check("Reference notes" not in extractor.system_prompt("Glent Group", "GBP", ""), "no reference section when the text is blank")
     check(extractor.CLASSIFY_TOOL["name"] == "label_email" and extractor.INVOICE_TOOL["name"] == "record_invoice", "both tools defined")
@@ -273,7 +280,7 @@ class FakeMailbox:
             self.labels[msg_id].add(label_name)
 
 
-def fake_classifier(api_key, model, email_meta, attachments, company_name="", reference_text=""):
+def fake_classifier(api_key, model, email_meta, attachments, company_name="", reference_text="", system_template=None):
     usage = {"input_tokens": 900, "output_tokens": 60, "model": model}
     if any(a["mime_type"] == "application/pdf" for a in attachments):
         return {"verdict": "invoice", "document_kind": "invoice", "confidence": 0.97, "reason": "PDF invoice attached.", "usage": usage}
@@ -306,7 +313,7 @@ def test_agents():
         check(box.queries[0] == "has:attachment is:unread -label:Invoice-Incoming -label:Not-an-invoice -label:Invoices-Processed", f"classification search excludes both agents' labels ({box.queries[0]})")
         check(box.labels["m-inv"] == {"Invoice Incoming"} and box.labels["m-rem"] == {"Not an invoice"} and box.labels["m-spam"] == {"Not an invoice"}, f"labels applied per verdict ({box.labels})")
         check(classify.call_count == 2, "the disallowed sender is labelled without a Claude call")
-        check(classify.call_args_list[0].kwargs["model"] == "claude-opus-5", "classification uses the classification model")
+        check(classify.call_args_list[0].kwargs["model"] == "claude-opus-5" and classify.call_args_list[0].kwargs["reference_text"] == "" and classify.call_args_list[0].kwargs["system_template"] == prompts.CLASSIFY_SYSTEM, "classification uses its model, its (empty) reference text and its prompt")
         rows = store.list_classifications()
         check(len(rows) == 3 and {r["verdict"] for r in rows} == {"invoice", "not_invoice"}, "every decision recorded")
         spam = next(r for r in rows if r["gmail_message_id"] == "m-spam")
@@ -319,7 +326,7 @@ def test_agents():
         check(result["ok"] and result["messages"] == 1 and result["processed"] == 1 and result["errors"] == 0, f"extraction run reads only the labelled email ({result})")
         check(box.queries[-1] == "label:Invoice-Incoming -label:Invoices-Processed", f"extraction search uses the labels ({box.queries[-1]})")
         check("Invoices/Processed" in box.labels["m-inv"] and "m-inv" in box.read, "processed email labelled and marked read")
-        check(extract.call_args.kwargs["model"] == "claude-opus-5" and extract.call_args.kwargs["reference_text"] == "", "extraction uses the extraction model and its reference text")
+        check(extract.call_args.kwargs["model"] == "claude-opus-5" and extract.call_args.kwargs["reference_text"] == "" and extract.call_args.kwargs["system_template"] == prompts.EXTRACT_SYSTEM, "extraction uses its model, its (empty) reference text and its prompt")
         inv = next(i for i in store.list_invoices() if i["gmail_message_id"] == "m-inv")
         check(inv["status"] == "review" and inv["attachment_name"] == "NMS-2026-0417.pdf" and inv["sage"]["invoice_type"]["id"] == "subcontractor", "labelled invoice extracted into the Inbox with its type")
 
@@ -453,7 +460,32 @@ def test_pipeline_and_routes():
     r = client.get("/settings")
     check(b"sk-ant-new" in r.data and b"csec" in r.data, "saved secrets come back into the masked inputs")
 
-    # Agent tabs: save, then run without Gmail
+    # Agent tabs: the prompt is shown and editable, the reference text starts empty with examples
+    r = client.get("/agents/classification")
+    check(b"Instructions to the AI" in r.data and b"You are the mailbox classifier for {company_name}" in r.data and b"This is the shipped wording" in r.data and b'value="reset_prompt" formnovalidate disabled' in r.data, "classification tab shows the shipped prompt with a disabled restore button")
+    check(b"System prompt as sent" in r.data and b"mailbox classifier for Glent Group, a UK" in r.data and b"Subject: Invoice NMS-2026-0417 - HEL18 Hall 2" in r.data and b"NMS-2026-0417.pdf (application/pdf, 48 KB)" in r.data, "classification tab previews the prompt as sent and the per-email note")
+    check(b"Examples of what to add" in r.data and b"Nothing here yet" in r.data and b"Empty - nothing is added to the prompt yet" in r.data and b"Speedy Hire send a statement" in r.data, "classification reference text is empty with examples")
+    r = client.post("/agents/classification", data={"classify_system_prompt": prompts.CLASSIFY_SYSTEM.replace("\n", "\r\n"), "classify_reference_text": "Line one\r\n\r\nLine two", "classify_model": "claude-opus-5"}, follow_redirects=True)
+    saved = config.load_settings()
+    check(saved["classify_system_prompt"] == prompts.CLASSIFY_SYSTEM and saved["classify_reference_text"] == "Line one\n\nLine two" and b"This is the shipped wording" in r.data and b"2 paragraphs" in r.data, "a browser save with CRLF line endings still counts as the shipped wording and keeps paragraphs")
+    r = client.post("/agents/classification", data={"classify_system_prompt": "Only {company_name} invoices count. {keep}", "classify_model": "claude-opus-5"}, follow_redirects=True)
+    saved = config.load_settings()
+    check(saved["classify_system_prompt"] == "Only {company_name} invoices count. {keep}" and b"Edited from the shipped wording" in r.data and b"Only Glent Group invoices count. {keep}" in r.data and b'value="reset_prompt" formnovalidate onclick' in r.data, "edited prompt saved, previewed with the placeholder filled, restore enabled")
+    r = client.post("/agents/classification", data={"classify_system_prompt": "", "classify_model": "claude-opus-5"}, follow_redirects=True)
+    saved = config.load_settings()
+    check(saved["classify_system_prompt"] == prompts.CLASSIFY_SYSTEM and b"cannot be empty" in r.data, "an emptied prompt goes back to the default with a warning")
+    client.post("/agents/classification", data={"classify_system_prompt": "Short.", "classify_model": "claude-sonnet-5"})
+    r = client.post("/agents/classification", data={"classify_system_prompt": "Short.", "classify_model": "claude-haiku-4-5-20251001", "gmail_max_messages": "9", "action": "reset_prompt"}, follow_redirects=True)
+    saved = config.load_settings()
+    check(saved["classify_system_prompt"] == prompts.CLASSIFY_SYSTEM and saved["classify_model"] == "claude-haiku-4-5-20251001" and saved["gmail_max_messages"] == 9 and b"Instructions restored to the default" in r.data and b"This is the shipped wording" in r.data, "restore default puts the shipped prompt back and still saves the other fields")
+    r = client.get("/agents/extraction")
+    check(b"You are the accounts payable assistant for {company_name}" in r.data and b"Default currency GBP unless" in r.data and b"This is the shipped wording" in r.data and b"Examples of what to add" in r.data and b"Attachment: NMS-2026-0417.pdf" in r.data, "extraction tab shows the shipped prompt, the preview with the currency filled, and the examples")
+    r = client.post("/agents/extraction", data={"extract_system_prompt": "Read it in {default_currency}.", "extract_model": "claude-opus-5"}, follow_redirects=True)
+    saved = config.load_settings()
+    check(saved["extract_system_prompt"] == "Read it in {default_currency}." and b"Read it in GBP." in r.data and b"Edited from the shipped wording" in r.data, "edited extraction prompt saved and previewed")
+    r = client.post("/agents/extraction", data={"extract_system_prompt": "x", "extract_model": "claude-opus-5", "action": "reset_prompt"}, follow_redirects=True)
+    saved = config.load_settings()
+    check(saved["extract_system_prompt"] == prompts.EXTRACT_SYSTEM and b"Instructions restored to the default" in r.data, "extraction restore default works")
     r = client.post("/agents/classification", data={
         "classify_model": "claude-haiku-4-5-20251001", "classify_reference_text": "Northbank send AFPs.\n\nStatements from Speedy are not invoices.",
         "classify_invoice_label": "Invoice Incoming", "classify_other_label": "", "gmail_query": "has:attachment", "gmail_allowed_senders": "", "gmail_max_messages": "7",
@@ -462,6 +494,7 @@ def test_pipeline_and_routes():
     check(r.status_code == 200 and saved["classify_model"] == "claude-haiku-4-5-20251001" and saved["gmail_max_messages"] == 7 and saved["classify_other_label"] == "" and "AFPs" in saved["classify_reference_text"], "classification agent settings saved")
     r = client.get("/agents/classification")
     check(b"2 paragraphs" in r.data and b"sent whole" in r.data and b'value="claude-haiku-4-5-20251001" selected' in r.data, "classification tab shows the reference text size and the model")
+    check(b"then the reference text." in r.data and b"Statements from Speedy are not invoices." in r.data, "the as-sent preview includes the reference text once there is some")
     check(b"Remittance advice" in r.data and b"Not an invoice" in r.data and b"97%" in r.data, "classification tab lists the recorded decisions")
     r = client.post("/agents/classification", data={"classify_model": "claude-opus-5", "classify_invoice_label": "", "action": "run"}, follow_redirects=True)
     saved = config.load_settings()
@@ -470,6 +503,8 @@ def test_pipeline_and_routes():
     r = client.post("/agents/extraction", data={"extract_model": "claude-sonnet-5", "extract_reference_text": "HEL18 is the Helsinki job.", "gmail_processed_label": "Done/Invoices", "poll_minutes": "15"}, follow_redirects=True)
     saved = config.load_settings()
     check(saved["extract_model"] == "claude-sonnet-5" and saved["poll_minutes"] == 15 and saved["gmail_processed_label"] == "Done/Invoices", "extraction agent settings saved")
+    r = client.get("/agents/extraction")
+    check(b"1 paragraph -" in r.data and b"HEL18 is the Helsinki job." in r.data and r.data.count(b"HEL18 is the Helsinki job.") == 2, "extraction tab shows the reference text in the box and in the as-sent preview")
     r = client.get("/agents/extraction")
     check(b'value="claude-sonnet-5" selected' in r.data and b"invoice_number" in r.data and b"line_items[]" in r.data and b"Done/Invoices" in r.data, "extraction tab shows the model, the schema and the label")
     r = client.post("/agents/extraction", data={"action": "run"}, follow_redirects=True)

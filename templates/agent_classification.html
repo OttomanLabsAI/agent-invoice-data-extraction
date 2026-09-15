@@ -30,15 +30,58 @@
   </div>
 </section>
 
-<section class="sheet">
+<section class="sheet" id="prompt">
+  <h2>Instructions to the AI</h2>
+  <p class="help">The prompt the model is given, word for word, before every email. Edit it here if it keeps getting something wrong; <em>Restore default</em> brings the shipped wording back. {% for key, meaning in placeholders.items() %}<code>{{ '{' ~ key ~ '}' }}</code> is {{ meaning }}{{ ', ' if not loop.last else '.' }}{% endfor %}</p>
+  <div class="field">
+    <label for="classify_system_prompt">System prompt</label>
+    <div>
+      <textarea id="classify_system_prompt" name="classify_system_prompt" class="prompt" spellcheck="false">{{ s.classify_system_prompt }}</textarea>
+      <div class="hint restore">
+        <button class="btn small" type="submit" name="action" value="reset_prompt" formnovalidate{% if prompt_is_default %} disabled{% endif %} onclick="return confirm('Put the default instructions back? Your edits to the prompt will be lost.')">Restore default</button>
+        <span>{% if prompt_is_default %}This is the shipped wording.{% else %}Edited from the shipped wording. Restore puts the default back and saves.{% endif %} Saving with an empty box also puts the default back.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sheet" id="reference">
   <h2>Reference text (RAG)</h2>
-  <p class="help">What the agent should know when deciding: which suppliers send applications for payment, senders whose mail is never an invoice, how statements and remittances from particular suppliers look, anything it has got wrong before. The relevant paragraphs are retrieved and added to the instructions for every email.</p>
+  <p class="help">Your own notes, added to the instructions above for every email: what the agent cannot know from the prompt alone. Empty to start with. One note per paragraph, blank lines between them; once the text outgrows the budget only the paragraphs that share words with each email are sent.</p>
   <div class="field">
     <label for="classify_reference_text">Reference text<small>RAG retrieval</small></label>
     <div>
-      <textarea id="classify_reference_text" name="classify_reference_text" style="min-height:14rem" placeholder="Paste notes, lists and examples here. Blank lines separate paragraphs.">{{ s.classify_reference_text }}</textarea>
+      <textarea id="classify_reference_text" name="classify_reference_text" style="min-height:12rem" placeholder="Nothing here yet. Add notes like the examples below - one per paragraph.">{{ s.classify_reference_text }}</textarea>
       <div class="hint">{% if rag_info.chars %}Currently {{ '{:,}'.format(rag_info.chars) }} characters in {{ rag_info.paragraphs }} paragraph{{ '' if rag_info.paragraphs == 1 else 's' }} - {% if rag_info.whole %}sent whole with every email.{% else %}over the {{ '{:,}'.format(rag_info.max_chars) }}-character budget, so only the paragraphs that share words with each email are sent.{% endif %}{% else %}Empty - nothing is added to the prompt yet.{% endif %}</div>
     </div>
+  </div>
+  <div class="field">
+    <label>Examples of what to add</label>
+    <div>
+      <ul class="examples">
+        <li>Northbank Mechanical Services send a monthly application for payment as a PDF headed "Application for Payment" - treat it as an invoice.</li>
+        <li>Speedy Hire send a statement of account on the 1st of each month; it is never an invoice. Their invoices come from invoices@speedyservices.com with the invoice number in the subject.</li>
+        <li>Anything from @bigclient.example is a customer: remittances, purchase orders and queries about our invoices, never a supplier invoice.</li>
+        <li>Chasers with a copy invoice attached count as invoices; chasers with nothing attached do not.</li>
+        <li>Portal notifications ("You have a new invoice from ...") with a link and no attachment count as invoices, so someone fetches the document by hand.</li>
+        <li>Site managers forward supplier invoices from their own mailboxes - judge the attachment, not the forwarder.</li>
+        <li>Mistake to avoid: on 3 Sep it labelled a CIS deduction statement as an invoice. CIS statements are not invoices.</li>
+      </ul>
+      <div class="hint">Supplier habits, senders to ignore, how particular paperwork looks, and anything it has got wrong before, with the correct answer.</div>
+    </div>
+  </div>
+</section>
+
+<section class="sheet" id="preview">
+  <h2>What the AI receives</h2>
+  <p class="help">Exactly what goes to {{ s.classify_model | model_label }} for each email, as saved: the system prompt, then the email's attachments (up to 3, 12 MB in all) with the note below, and the <code>{{ tool.name }}</code> tool it answers through - {% for name in tool.input_schema.properties %}{{ name }}{{ ', ' if not loop.last }}{% endfor %}.</p>
+  <div class="field">
+    <label>System prompt as sent</label>
+    <div><pre class="prompt">{{ preview_system }}</pre><div class="hint">The instructions with the placeholders filled in{% if rag_info.chars %}, then the reference text{% if not rag_info.whole %} (only the paragraphs matching each email){% endif %}{% endif %}.</div></div>
+  </div>
+  <div class="field">
+    <label>Then, with each email</label>
+    <div><pre class="prompt">{{ preview_note }}</pre><div class="hint">Shown for the sample invoice email. The email body is cut at 3,000 characters.</div></div>
   </div>
 </section>
 
