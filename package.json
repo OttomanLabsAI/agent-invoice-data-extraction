@@ -1,6 +1,6 @@
 {
   "name": "agent-invoice-data-extraction",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "private": true,
   "description": "Website for the Glent Group invoice intake agent, served from public/ on Cloudflare Workers",
   "scripts": {

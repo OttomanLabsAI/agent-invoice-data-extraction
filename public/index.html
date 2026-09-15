@@ -113,7 +113,14 @@
 
     <section class="sheet" id="download">
       <h2>Download</h2>
-      <p class="help">Every download is a zip straight from GitHub. Unzip it and follow <a href="#run">Get it running</a>.</p>
+      <p class="help">The updater is the easy way: it fetches the app for you, keeps it up to date and starts it. The other downloads are zips straight from GitHub for doing it by hand.</p>
+      <div class="field">
+        <label>Updater</label>
+        <div>
+          <a class="btn primary" href="/downloads/invoice-agent-updater.zip">Download the updater</a>
+          <div class="hint">Unzip it, keep the <em>Invoice agent</em> folder on the desktop and double-click <code>update.bat</code> (Windows) or <code>update.command</code> (Mac). Its page installs the latest version, updates it in one click without losing your data, installs older versions and starts the app. Needs Python 3 only.</div>
+        </div>
+      </div>
       <div class="field">
         <label>Latest build</label>
         <div>
@@ -162,7 +169,11 @@
           <a href="/assets/img/invoice-types.png?v=3.2"><img src="/assets/img/invoice-types.png?v=3.2" alt="The Invoice types page: the Subcontractor type with its matching rules, GL account per line category and VAT tax details" width="1200" height="760" loading="lazy"></a>
           <figcaption><strong>Invoice types.</strong> One sheet per type: what it covers, how it is matched, its GL and VAT overrides, deductions, checks and posting options. Add your own or remove the ones you do not use.</figcaption>
         </figure>
-        <figure class="shot wide">
+        <figure class="shot">
+          <a href="/assets/img/updater.png?v=3.3"><img src="/assets/img/updater.png?v=3.3" alt="The updater page: installed and latest versions both v3.2, an Up to date notice, Start the app and Check again buttons, and a log of the download and install" width="1200" height="760" loading="lazy"></a>
+          <figcaption><strong>Updater.</strong> Its own small page, opened by <code>update.bat</code> or <code>update.command</code>: the installed and latest versions, one-click install or update that keeps your data, older versions, and <em>Start the app</em>.</figcaption>
+        </figure>
+        <figure class="shot">
           <a href="/assets/img/settings.png?v=3.2"><img src="/assets/img/settings.png?v=3.2" alt="The Settings page: masked API key field with a reveal button and the Gmail OAuth client fields" width="1200" height="760" loading="lazy"></a>
           <figcaption><strong>Settings.</strong> Every key is pasted here and masked; the eye button reveals it so you can check a paste. <em>Connect Gmail</em> saves the page and opens Google's sign-in. The Sage coding below comes pre-filled with generic contractor codes.</figcaption>
         </figure>
@@ -173,11 +184,12 @@
       <h2>Get it running</h2>
       <p class="help">One machine, one browser tab. The first start takes a minute or two while it sets itself up; after that it starts straight away.</p>
       <ol class="steps">
-        <li><strong>Download</strong> the latest build above and unzip it somewhere sensible, such as a folder called <em>Invoice agent</em> in Documents.</li>
         <li><strong>Have Python 3 on the machine</strong> (3.11 or newer). On Windows, install it from <a href="https://www.python.org/downloads/">python.org</a> and tick <em>Add python.exe to PATH</em> in the installer. Macs and Linux machines usually have it already.</li>
-        <li><strong>Start it.</strong> On Windows, double-click <code>run.bat</code>. On a Mac, open Terminal, type <code>bash </code> (with a space), drag <code>run.sh</code> into the window and press Enter. The window that opens is the app running - leave it open while you work; closing it stops the app.</li>
-        <li><strong>Open <code>http://localhost:8765</code></strong> in your browser. The Inbox tells you what still needs connecting.</li>
+        <li><strong>Download the updater</strong> above, unzip it, and keep the <em>Invoice agent</em> folder on the desktop.</li>
+        <li><strong>Double-click <code>update.bat</code></strong> (Windows) or <code>update.command</code> (Mac; if it will not open, right-click it, choose <em>Open</em>, then <em>Open</em> again). Its page opens in your browser: click <em>Install the latest version</em>, then <em>Start the app</em>. On Windows the app runs in the black window that opens - leave it open while you work; closing it stops the app.</li>
+        <li><strong>The app opens at <code>http://localhost:8765</code></strong> by itself once it is ready. The Inbox tells you what still needs connecting. Next time, the same double-click tells you if there is a new version and starts the app.</li>
       </ol>
+      <p>Prefer to do it by hand? Download the latest build, unzip it, and double-click <code>run.bat</code> (Windows) or, on a Mac, open Terminal, type <code>bash </code> (with a space), drag <code>run.sh</code> into the window and press Enter.</p>
     </section>
 
     <section class="sheet" id="setup">

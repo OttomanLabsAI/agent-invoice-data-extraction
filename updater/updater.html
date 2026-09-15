@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="updater-token" content="__TOKEN__">
+  <link rel="icon" href="data:,">
+  <title>Invoice intake · updater</title>
+  <style>
+    :root {
+      --paper: #f2f4f1; --sheet: #ffffff; --ink: #1a2622; --ink-soft: #5b6863; --rule: #d6dcd6; --rule-strong: #a7b2a9;
+      --margin: #b23a2c; --margin-soft: #f6e3df; --posted: #2c6a44; --posted-soft: #e1efe5; --amber: #9c6a12; --amber-soft: #f7ecd5;
+      --font: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif; --mono: "IBM Plex Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+    }
+    body { margin: 0; font-family: var(--font); font-size: 15px; line-height: 1.5; color: var(--ink); background: var(--paper); }
+    .topbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0.3rem 1.5rem; padding: 0.9rem 2rem; background: var(--sheet); border-bottom: 1px solid var(--rule-strong); }
+    .wordmark { font-weight: 600; white-space: nowrap; } .wordmark span { color: var(--ink-soft); font-weight: 400; }
+    main { max-width: 62rem; margin: 0 auto; padding: 1.4rem 2rem 3rem; border-left: 2px solid var(--margin); }
+    .sheet { background: var(--sheet); border: 1px solid var(--rule); padding: 1.1rem 1.3rem; margin-bottom: 1.2rem; }
+    h1 { font-size: 1.5rem; margin: 0 0 0.3rem; }
+    h2 { font-size: 1.05rem; margin: 0 0 0.8rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--rule-strong); }
+    p { margin: 0 0 0.8rem; max-width: 72ch; }
+    .meta, .hint { color: var(--ink-soft); font-size: 0.9rem; } .hint { font-size: 0.82rem; margin-top: 0.4rem; }
+    .row { display: grid; grid-template-columns: 11rem 1fr; gap: 0.3rem 1rem; align-items: baseline; padding: 0.45rem 0; border-bottom: 1px solid var(--rule); }
+    .row:last-of-type { border-bottom: 0; }
+    .row label { color: var(--ink-soft); }
+    .value { font-size: 1.15rem; }
+    code { font-family: var(--mono); font-size: 0.85rem; background: var(--paper); padding: 0.05rem 0.3rem; border-radius: 2px; }
+    .btn { font: inherit; font-size: 0.92rem; padding: 0.45rem 0.9rem; border: 1px solid var(--rule-strong); background: var(--sheet); color: var(--ink); border-radius: 3px; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+    .btn.primary { background: var(--margin); border-color: var(--margin); color: #fff; }
+    .btn:disabled, .btn.disabled { opacity: 0.45; cursor: default; pointer-events: none; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.9rem; align-items: center; }
+    .state { padding: 0.6rem 0.9rem; border-left: 3px solid var(--rule-strong); background: var(--paper); margin: 0.8rem 0 0; }
+    .state.good { border-color: var(--posted); background: var(--posted-soft); }
+    .state.warn { border-color: var(--amber); background: var(--amber-soft); }
+    .state.bad { border-color: var(--margin); background: var(--margin-soft); }
+    pre.log { font-family: var(--mono); font-size: 0.8rem; line-height: 1.45; background: var(--paper); border: 1px solid var(--rule); padding: 0.7rem 0.9rem; max-height: 16rem; overflow: auto; white-space: pre-wrap; margin: 0.8rem 0 0; }
+    select { font: inherit; padding: 0.4rem 0.5rem; border: 1px solid var(--rule-strong); border-radius: 3px; background: var(--sheet); min-width: 16rem; max-width: 100%; }
+    .versions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+    [hidden] { display: none !important; }
+    @media (max-width: 640px) { .row { grid-template-columns: 1fr; } main { padding: 1rem; } .topbar { padding: 0.8rem 1rem; } }
+  </style>
+</head>
+<body>
+  <header class="topbar"><span class="wordmark">Glent Group <span>invoice intake · updater</span></span><span class="meta" id="folder"></span></header>
+  <main>
+    <h1>Updater</h1>
+    <p class="meta">Checks for a new version of the invoice intake agent, installs it without losing your data, and starts the app.</p>
+    <div class="state warn" id="offline" hidden>This page was opened as a file, so it can only list and download versions. Double-click <code>update.bat</code> (Windows) or <code>update.command</code> (Mac) to open it properly, with the Update and Start buttons working.</div>
+
+    <section class="sheet">
+      <h2>Version</h2>
+      <div class="row"><label>Installed</label><div class="value" id="installed">…</div></div>
+      <div class="row"><label>Latest</label><div class="value" id="latest">…</div></div>
+      <div class="state" id="state">Checking…</div>
+      <div class="actions">
+        <button class="btn primary" id="update" type="button" disabled>Update</button>
+        <button class="btn" id="start" type="button" disabled>Start the app</button>
+        <a class="btn" id="open" href="#" target="_blank" rel="noopener" hidden>Open the app</a>
+        <button class="btn" id="refresh" type="button">Check again</button>
+      </div>
+      <pre class="log" id="log" hidden></pre>
+    </section>
+
+    <section class="sheet">
+      <h2>Older versions</h2>
+      <p class="meta">Any published version can be installed in place of the current one; your data folder is kept. Or download a zip to keep somewhere.</p>
+      <div class="versions">
+        <select id="version-select" disabled><option>Loading…</option></select>
+        <button class="btn" id="install-version" type="button" disabled>Install this version</button>
+        <a class="btn disabled" id="download-version" href="#" aria-disabled="true">Download zip</a>
+        <a class="btn" id="download-latest" href="https://github.com/OttomanLabsAI/agent-invoice-data-extraction/archive/refs/heads/main.zip">Download the latest zip</a>
+      </div>
+      <div class="hint" id="version-note">Looking up published versions…</div>
+    </section>
+
+    <section class="sheet">
+      <h2>How it works</h2>
+      <p class="meta">The app lives in the <code>app</code> folder next to <code>updater.py</code>. An update downloads the chosen version from GitHub, unpacks it, moves your <code>data</code> folder (settings, Gmail token, invoices) and the app's installed parts across, then deletes the old version and the zip. Close the app's window before updating. <em>Start the app</em> runs <code>run.bat</code> (Windows) or <code>run.sh</code> (Mac) for you; the app then keeps running on its own.</p>
+      <div class="actions"><button class="btn" id="quit" type="button">Close the updater</button></div>
+    </section>
+  </main>
+  <script>
+  (function () {
+    "use strict";
+    var repo = "OttomanLabsAI/agent-invoice-data-extraction";
+    var token = document.querySelector('meta[name="updater-token"]').getAttribute("content");
+    var served = /^https?:$/.test(location.protocol);
+    var $ = function (id) { return document.getElementById(id); };
+    var lastVersions = null, timer = null, closed = false;
+
+    function api(path, body) {
+      var opts = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Updater-Token": token }, body: JSON.stringify(body) } : { cache: "no-store" };
+      return fetch(path, opts).then(function (r) { return r.json(); });
+    }
+    function zipFor(tag) { return "https://github.com/" + repo + "/archive/refs/tags/" + encodeURIComponent(tag) + ".zip"; }
+    function versionKey(tag) { var m = /(\d+)\.(\d+)/.exec(tag || ""); return m ? Number(m[1]) * 100000 + Number(m[2]) : -1; }
+    function setState(cls, text) { var el = $("state"); el.className = "state " + cls; el.textContent = text; }
+
+    function renderVersions(list) {
+      var key = JSON.stringify(list);
+      if (key === lastVersions) return;
+      lastVersions = key;
+      var select = $("version-select"), button = $("install-version"), link = $("download-version"), note = $("version-note");
+      select.innerHTML = "";
+      button.disabled = true; link.classList.add("disabled"); link.setAttribute("aria-disabled", "true");
+      if (list === null) { select.appendChild(new Option("GitHub could not be reached")); select.disabled = true; note.textContent = "Could not reach GitHub to list the versions. Check the connection, then Check again."; return; }
+      if (!list.length) { select.appendChild(new Option("No older versions published yet")); select.disabled = true; note.textContent = "Published versions appear here once they exist on GitHub. The latest build is always available above."; return; }
+      list.forEach(function (v) { select.appendChild(new Option(v.label, v.tag)); });
+      select.disabled = false;
+      button.disabled = !served;
+      link.href = list[0].zip || zipFor(list[0].tag); link.classList.remove("disabled"); link.removeAttribute("aria-disabled");
+      select.onchange = function () { link.href = zipFor(select.value); };
+      note.textContent = list.length + (list.length === 1 ? " version" : " versions") + " published, newest first.";
+    }
+
+    function render(s) {
+      $("folder").textContent = s.folder || ("Not installed yet - it will go in " + s.base + "/app");
+      $("installed").textContent = s.installed || "not installed";
+      $("latest").textContent = s.latest || (s.github_ok ? "unknown" : "could not reach GitHub");
+      var pct = s.progress && s.progress[1] ? Math.round(s.progress[0] / s.progress[1] * 100) + "% downloaded" : (s.progress ? (s.progress[0] / 1048576).toFixed(1) + " MB downloaded" : "");
+      if (s.busy) setState("warn", "Working… " + pct);
+      else if (s.error) setState("bad", s.error);
+      else if (s.starting) setState("warn", "Starting the app. The first start sets up its parts and takes a minute or two; it opens in the browser by itself when ready.");
+      else if (s.app_running) setState("good", (s.state === "update_available" ? "A newer version is available: " + s.latest + ". " : "") + "The app is running - close its window before updating.");
+      else if (s.state === "not_installed") setState("warn", "The app is not installed yet. Click Install the latest version.");
+      else if (s.state === "update_available") setState("warn", "A newer version is available: " + s.latest + ". Click Update; your data folder is kept.");
+      else if (s.state === "up_to_date") setState("good", "Up to date.");
+      else setState("warn", "Could not check for a new version - GitHub is not reachable at the moment.");
+      var update = $("update");
+      update.textContent = s.state === "not_installed" ? "Install the latest version" : (s.state === "up_to_date" ? "Up to date" : (s.latest ? "Update to " + s.latest : "Install the latest version"));
+      update.disabled = s.busy || s.state === "up_to_date" || s.app_running;
+      $("start").disabled = s.busy || !s.folder || s.app_running || s.starting;
+      $("start").textContent = s.starting ? "Starting…" : "Start the app";
+      $("open").hidden = !s.app_running; $("open").href = s.app_url;
+      $("install-version").disabled = s.busy || s.app_running || $("version-select").disabled;
+      $("download-latest").href = s.latest_zip || $("download-latest").href;
+      $("log").hidden = !s.log.length; $("log").textContent = s.log.join("\n");
+      if (s.log.length) $("log").scrollTop = $("log").scrollHeight;
+      renderVersions(s.versions);
+      $("install-version").disabled = s.busy || s.app_running || $("version-select").disabled;
+      schedule(s.busy || s.starting ? 1500 : 8000);
+    }
+    function schedule(ms) { clearTimeout(timer); if (!closed) timer = setTimeout(function () { poll(false); }, ms); }
+    function poll(refresh) {
+      clearTimeout(timer);
+      api("/api/status" + (refresh ? "?refresh=1" : "")).then(render).catch(function () {
+        if (closed) return;
+        setState("bad", "The updater has been closed. Double-click update.bat (Windows) or update.command (Mac) to open it again.");
+        ["update", "start", "install-version"].forEach(function (id) { $(id).disabled = true; });
+        schedule(5000);
+      });
+    }
+    function act(path, body, thenFast) {
+      return api(path, body).then(function (r) {
+        if (r && r.message && !r.ok) setState("bad", r.message);
+        else if (r && r.message) setState("warn", r.message);
+        if (thenFast) schedule(800);
+      }).catch(function () { setState("bad", "Could not reach the updater. Is its window still open?"); });
+    }
+
+    $("update").addEventListener("click", function () {
+      if ($("installed").textContent !== "not installed" && !confirm("Update the app? Your data folder (settings, Gmail token, invoices) is kept. Make sure the app's window is closed.")) return;
+      $("update").disabled = true;
+      act("/api/install", { version: "latest" }, true);
+    });
+    $("install-version").addEventListener("click", function () {
+      var tag = $("version-select").value;
+      if (!confirm("Install " + tag + " in place of the current version? Your data folder is kept. Make sure the app's window is closed.")) return;
+      act("/api/install", { version: tag }, true);
+    });
+    $("start").addEventListener("click", function () { $("start").disabled = true; act("/api/start", {}, true); });
+    $("refresh").addEventListener("click", function () { poll(true); });
+    $("quit").addEventListener("click", function () {
+      if (!confirm("Close the updater? The app keeps running if it was started.")) return;
+      closed = true; clearTimeout(timer);
+      act("/api/quit", {}, false).then(function () { setState("good", "Updater closed. You can close this tab."); ["update", "start", "install-version", "refresh", "quit"].forEach(function (id) { $(id).disabled = true; }); });
+    });
+
+    if (served) {
+      poll(true);
+    } else {
+      $("offline").hidden = false;
+      ["update", "start", "quit"].forEach(function (id) { $(id).disabled = true; });
+      $("folder").textContent = "";
+      $("installed").textContent = "open through update.bat to see";
+      var gh = { headers: { Accept: "application/vnd.github+json" } };
+      var raw = "https://raw.githubusercontent.com/" + repo + "/main/";
+      fetch(raw + "VERSION", { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : Promise.reject(); })
+        .catch(function () { return fetch(raw + "package.json", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : Promise.reject(); }).then(function (j) { return j.version || ""; }); })
+        .then(function (t) { var m = /(\d+)\.(\d+)/.exec(String(t)); $("latest").textContent = m ? "v" + m[1] + "." + m[2] : "unknown"; })
+        .catch(function () { $("latest").textContent = "could not reach GitHub"; });
+      setState("warn", "Downloads work from here; installing and starting need update.bat / update.command.");
+      fetch("https://api.github.com/repos/" + repo + "/releases?per_page=100", gh).then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+        .then(function (list) {
+          var items = list.filter(function (r) { return !r.draft && r.tag_name; }).map(function (r) {
+            var label = r.tag_name; if (r.name && r.name !== r.tag_name) label += " - " + r.name; if (r.published_at) label += " (" + r.published_at.slice(0, 10) + ")";
+            return { tag: r.tag_name, label: label, zip: zipFor(r.tag_name) };
+          });
+          if (items.length) return items;
+          return fetch("https://api.github.com/repos/" + repo + "/tags?per_page=100", gh).then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+            .then(function (tags) { return tags.map(function (t) { return { tag: t.name, label: t.name, zip: zipFor(t.name) }; }); });
+        })
+        .then(function (items) { items.sort(function (a, b) { return versionKey(b.tag) - versionKey(a.tag); }); renderVersions(items); })
+        .catch(function () { renderVersions(null); });
+    }
+  })();
+  </script>
+</body>
+</html>

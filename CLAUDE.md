@@ -11,6 +11,7 @@ bash run.sh                 # venv + deps on first run, then starts the app (run
 python app.py               # same without the venv wrapper
 python tests/smoke_test.py  # end-to-end with Gmail faked and both Claude calls mocked; must print "All checks passed."
 python samples/make_sample.py   # regenerates samples/sample-invoice.pdf (needs reportlab, dev only)
+python updater/make_zip.py      # rebuilds public/downloads/invoice-agent-updater.zip from updater/ (dev only; run after any change in updater/)
 npm install && npm run check    # wrangler dry-run of the website in public/ (needs Node)
 npm run dev                     # preview the website locally
 ```
@@ -35,7 +36,9 @@ agent/store.py          SQLite: invoices + runs (with stage) + classifications (
 templates/              base (six tabs), dashboard (Inbox), invoice (review), agent_tree, agent_classification, agent_extraction, invoice_types, settings
 static/                 style.css (ledger-paper look, tree, types), app.js (reveal toggles, line editor, tabs, tests)
 samples/                fictional subcontractor invoice: reverse charge + CIS + retention, project HEL18
-tests/smoke_test.py     mapper + types + rag + both agents over a FakeMailbox + every route
+tests/smoke_test.py     mapper + types + rag + both agents over a FakeMailbox + every route + the updater with GitHub faked
+updater/                desktop updater, shipped separately as public/downloads/invoice-agent-updater.zip: updater.py (Manager + local HTTP page on 8766), updater.html, update.bat, update.command, README.txt, make_zip.py
+VERSION                 the release number (3.3); the updater reads it locally and from raw.githubusercontent.com/.../main/VERSION
 public/                 the project website (static; served by Cloudflare Workers, see below)
 wrangler.jsonc          assets-only Cloudflare config; package.json + package-lock.json carry wrangler
 ```
@@ -54,7 +57,8 @@ Invoice statuses: `review` -> `approved` -> `posted`; side states `queried`, `no
 - `public/assets/css/style.css` is a verbatim copy of `static/style.css`; `site.css` holds site-only layout (including the `.sheet .tree` overrides that stop the sheet's list spacing leaking into the tree). If the app stylesheet changes, copy it again.
 - `public/assets/img/` holds screenshots of the seven pages (inbox, agent-tree, classification, extraction, review, invoice-types, settings), 1200 px wide, taken from the running app with Gmail faked and both Claude calls mocked (the review image is the line editor plus the Key into Sage sheet, because headless Chromium draws the PDF preview black; the tree image is the whole tree). The `<img>` width/height attributes carry the real pixel size.
 - `public/404.html` uses root-relative asset paths so it is styled at any depth.
-- `public/_headers`: security headers, `/assets/*` cached immutable for a year, HTML must-revalidate. Every asset link in the HTML carries `?v=<release>`; bump it whenever an asset changes, or the cached copy is served for a year.
+- `public/_headers`: security headers, `/assets/*` cached immutable for a year, HTML and `/downloads/*` must-revalidate. Every asset link in the HTML carries `?v=<release>`; bump it whenever an asset changes, or the cached copy is served for a year.
+- `public/downloads/invoice-agent-updater.zip` is a committed build of `updater/` (top folder `Invoice agent/`, fixed timestamps so the bytes only change when the files do, `update.command` stored executable). Rebuild it with `python updater/make_zip.py` after any change in `updater/`.
 - `package-lock.json` stays committed or Workers Builds cannot install.
 - Verification before any push that touches the site: `npm run check` (wrangler dry run), then serve `public/` and render `index.html` and `404.html` in headless Chromium at desktop and phone widths and look at the screenshots - an unstyled page is the failure this catches. For the chooser, load the page in Playwright with the GitHub API routes stubbed (a releases list, then an empty list) and check both renderings. Check the tree section too: six boxes, zero list padding on `.tree > ul`, no horizontal overflow at 390 px.
 
@@ -71,6 +75,7 @@ Invoice statuses: `review` -> `approved` -> `posted`; side states `queried`, `no
 - **Gmail:** Desktop-app OAuth client, loopback redirect `http://localhost:8765/oauth/callback` (the URI shown on the Settings page is built from the request host). Scope `gmail.modify`. Three labels: `classify_invoice_label` (default `Invoice Incoming`, never blank), `classify_other_label` (default `Not an invoice`, blank = label nothing) and `gmail_processed_label` (`Invoices/Processed`). Nested labels are created parent-first. The classification search is `gmail_query` minus all three labels; the extraction search is `label:<invoice> -label:<processed>`; both use Gmail's hyphenated form from `gmail_client.search_label` (`re.sub(r'[\s/]+', '-', label)`). The agents talk to Gmail through `gmail_client.connect()` -> `Mailbox` (list / fetch / add_labels / mark_processed) so tests replace `connect` with a fake. Dedupe key is `(gmail_message_id, attachment_name)`; `classifications` upserts on `gmail_message_id`.
 - **Runs:** `runs.stage` is `classify`, `extract` or `inbox` (`init_db` adds the column to old databases); the Inbox shows the last `inbox` run, each agent tab its own. A partial failure keeps `ok: True` in the returned summary (the message says how many failed) but writes `ok = 0` on the run row.
 - **Secrets** are plain text in `data/settings.json` (0600) and `data/google_token.json`. `data/` is gitignored. Never log or flash a key.
+- **Updater** (`updater/updater.py`, standard library only, Python 3.9+): lives in its own folder with the app in `app/` beside it (it also adopts an unzipped `agent-invoice-data-extraction-main`). `Manager.status()` compares the local `VERSION` (falling back to `package.json` for builds before v3.3) with `raw.githubusercontent.com/<repo>/<branch>/VERSION` (branch from `INVOICE_AGENT_BRANCH`, default `main`), lists releases then tags from the GitHub API (cached 10 minutes), and reports whether the app answers on port 8765. `install(tag)`: refuses while the app is running, downloads `archive/refs/heads/<branch>.zip` or `archive/refs/tags/<tag>.zip` to `download.zip`, unpacks to `app.new`, moves `data/` and `.venv/` across, renames the old folder to `app.old` and removes it, renames the new one to `app`, deletes the zip, and refreshes the venv with `python -m pip install -r requirements.txt` (dropping the venv if that fails so `run.*` rebuilds it). `start_app()` runs `run.bat` in a new console (`cmd /c start`) or `bash run.sh` detached with output in `app.log`, then the next status poll opens the app URL once it answers. The page (`updater.html`, served on 127.0.0.1:8766 with a per-run token that every POST must carry) also works opened as a plain file, where it only lists and downloads versions. Tag names are validated (`valid_tag`) before they become URLs.
 
 ## Bugs already fixed - do not reintroduce
 
@@ -101,10 +106,10 @@ Settings defaults are generic contractor codes (GL 5000-7700, CIS 2214, retentio
 ## Git and release policy
 
 - Author identity for every commit: `Fid` / `fid_kk@proton.me` (set with `git config user.name/user.email` in this repo before the first commit).
-- Every push to `main` is a release. Versions are an ascending `vMAJOR.MINOR` sequence starting at `v1.0`; minor bump per push, major reserved for a ground-up overhaul.
+- Every push to `main` is a release. Versions are an ascending `vMAJOR.MINOR` sequence starting at `v1.0`; minor bump per push, major reserved for a ground-up overhaul. Each release bumps `VERSION` (the updater compares it) and `package.json` / `package-lock.json` (`MAJOR.MINOR.0`).
 - Commits: descriptive imperative first line, short prose body. No AI-attribution trailers, model names, session links or tooling identifiers in commits, titles or code comments. (The model IDs in `config.py` are application configuration and stay.)
 - Never push tags. Put the release text (Tag / Title / Description) in the reply so the GitHub release can be created by hand, and append a line to the ledger below.
-- Before every push: `python tests/smoke_test.py` green, start the app and click through Inbox -> sample upload -> review -> Settings, and confirm `git status` shows nothing under `data/`. If `public/` changed, also `npm run check` and the render check described above.
+- Before every push: `python tests/smoke_test.py` green, start the app and click through Inbox -> sample upload -> review -> Settings, and confirm `git status` shows nothing under `data/`. If `public/` changed, also `npm run check` and the render check described above. If `updater/` changed, rebuild the zip and run `updater.py` once against a throwaway folder (`INVOICE_AGENT_BRANCH=<branch>` after pushing the branch) to see it download, install and report the version.
 
 ### Release ledger
 
@@ -122,3 +127,4 @@ Settings defaults are generic contractor codes (GL 5000-7700, CIS 2214, retentio
 | v3.0 | 14 Sep 2026 | The browser version is retired. The address is a plain site again: what the app does in four steps, a download of the latest main build and a chooser for older tagged versions, with the local app restored from v1.0 as what gets downloaded. |
 | v3.1 | 15 Sep 2026 | The browser version's features come back into the local app: Agent - Classification and Agent - Invoice Extraction tabs, each with its model and reference text, Claude Opus 5 as the default, the Agent tree, generic contractor Sage coding, and invoice types. The website gets the agent tree and screenshots of every page. |
 | v3.2 | 15 Sep 2026 | Each agent's tab shows the prompt the AI is given, word for word, and lets it be edited, with a Restore default button and a preview of exactly what is sent. The reference text stays empty by design, with examples of what to add listed under it. |
+| v3.3 | 15 Sep 2026 | The desktop updater: a small Python file with its own page that shows the installed and latest versions, installs or updates the app in one click keeping the data folder, installs older versions, and starts the app. Downloaded from the website as a zip; the app carries a VERSION file. |

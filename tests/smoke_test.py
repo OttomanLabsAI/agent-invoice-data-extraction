@@ -7,12 +7,16 @@ Gmail is replaced by a fake mailbox and both Claude calls are mocked.
 
 from __future__ import annotations
 
+import http.client
+import io
 import json
 import os
 import shutil
 import sys
 import tempfile
+import threading
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -564,12 +568,110 @@ def test_pipeline_and_routes():
     check(r.get_json()["ok"] is False, "sage test refuses without credentials")
 
 
+def test_updater():
+    """The desktop updater: finds the installed app, compares versions, installs with the data folder kept, serves its page."""
+    sys.path.insert(0, str(ROOT / "updater"))
+    import updater  # noqa: E402
+
+    check(updater.version_key("v3.2") == (3, 2) and updater.version_key("3.10.0") == (3, 10) and updater.version_key("main") is None, "version keys parse tags and package versions")
+    check(updater.version_label("3.2.0") == "v3.2" and updater.version_label("") == "", "version labels are vMAJOR.MINOR")
+    check(updater.valid_tag("latest") and updater.valid_tag("v3.2") and updater.valid_tag("3.2.1") and not updater.valid_tag("../x") and not updater.valid_tag(""), "version names are validated before they become URLs")
+    check((ROOT / "VERSION").read_text().strip() == "3.3" and json.loads((ROOT / "package.json").read_text())["version"] == "3.3.0", "VERSION file and package version agree")
+
+    base = TMP / "desktop"
+    old = base / "agent-invoice-data-extraction-main"
+    (old / "agent").mkdir(parents=True)
+    (old / "app.py").write_text("old")
+    (old / "package.json").write_text('{"version": "3.1.0"}')
+    (old / "data").mkdir()
+    (old / "data" / "settings.json").write_text('{"anthropic_api_key": "keep-me"}')
+    m = updater.Manager(base)
+    check(m.app_dir() == old and m.installed_version() == "v3.1", "updater finds an unzipped main build and reads its version from package.json")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("agent-invoice-data-extraction-main/app.py", "new")
+        z.writestr("agent-invoice-data-extraction-main/agent/__init__.py", "")
+        z.writestr("agent-invoice-data-extraction-main/VERSION", "3.3\n")
+        z.writestr("agent-invoice-data-extraction-main/requirements.txt", "")
+    releases = [{"tag_name": "v3.2", "name": "See the prompt", "published_at": "2026-09-15T10:00:00Z", "draft": False},
+                {"tag_name": "v1.0", "name": "First", "published_at": "2026-09-14T10:00:00Z", "draft": False},
+                {"tag_name": "v9.9", "name": "draft", "draft": True}]
+
+    def fake_fetch(url, timeout=30):
+        fake_fetch.urls.append(url)
+        if url.endswith("/VERSION"):
+            return b"3.3\n"
+        if "/releases" in url:
+            return json.dumps(releases).encode()
+        raise AssertionError(url)
+    fake_fetch.urls = []
+
+    def fake_download(url, dest, progress=None):
+        fake_download.urls.append(url)
+        dest.write_bytes(buf.getvalue())
+        if progress:
+            progress(len(buf.getvalue()), len(buf.getvalue()))
+    fake_download.urls = []
+
+    with mock.patch.object(updater, "fetch", side_effect=fake_fetch), mock.patch.object(updater, "download", side_effect=fake_download), \
+         mock.patch.object(updater, "app_running", return_value=False):
+        s = m.status(refresh=True)
+        check(s["installed"] == "v3.1" and s["latest"] == "v3.3" and s["state"] == "update_available", f"status compares installed with latest ({s['installed']} / {s['latest']} / {s['state']})")
+        check([v["tag"] for v in s["versions"]] == ["v3.2", "v1.0"] and s["versions"][0]["zip"].endswith("/archive/refs/tags/v3.2.zip") and "See the prompt" in s["versions"][0]["label"], "releases listed newest first with their zips, drafts skipped")
+        check(fake_fetch.urls[0].endswith("/main/VERSION"), "latest version read from the VERSION file on main")
+        m.install("latest")
+        new = base / "app"
+        check(m.error == "" and fake_download.urls[-1].endswith("/archive/refs/heads/main.zip"), f"update downloads the main zip ({m.error})")
+        check(new.is_dir() and (new / "VERSION").read_text().strip() == "3.3" and (new / "app.py").read_text() == "new", "new version installed into app/")
+        check((new / "data" / "settings.json").read_text() == '{"anthropic_api_key": "keep-me"}', "data folder carried over to the new version")
+        check(not old.exists() and not (base / "download.zip").exists() and not (base / "app.new").exists() and not (base / "app.old").exists(), "old version, zip and working folders removed")
+        check(any("Deleted the zip" in line for line in m.log) and any("Installed v3.3" in line for line in m.log), "the log tells the story")
+        s = m.status()
+        check(s["state"] == "up_to_date" and s["installed"] == "v3.3" and s["folder"] == str(new), "status is up to date after the install")
+        m.install("v3.2")
+        check(m.error == "" and fake_download.urls[-1].endswith("/archive/refs/tags/v3.2.zip") and (new / "data" / "settings.json").exists(), "an older version installs from its tag zip, data kept")
+        m.install("../etc")
+        check("not a version" in m.error, "a bad version name is refused")
+    with mock.patch.object(updater, "app_running", return_value=True):
+        m.install("latest")
+        check("running" in m.error, "refuses to update while the app is running")
+    with mock.patch.object(updater, "fetch", side_effect=OSError("offline")):
+        s = m.status(refresh=True)
+        check(s["latest"] == "" and s["versions"] is None and s["github_ok"] is False and s["state"] == "unknown_latest", "offline: no latest version, no list, state says so")
+
+    server = updater.make_server(m, port=0, page_path=ROOT / "updater" / "updater.html")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/")
+        r = conn.getresponse(); body = r.read()
+        check(r.status == 200 and updater.Handler.token.encode() in body and b"__TOKEN__" not in body and b"Older versions" in body, "page served with the token filled in")
+        conn.request("GET", "/api/status")
+        r = conn.getresponse(); status = json.loads(r.read())
+        check(r.status == 200 and status["installed"] == "v3.3" and status["platform"] in ("windows", "mac", "linux"), "status API answers")
+        conn.request("POST", "/api/start", body="{}", headers={"Content-Type": "application/json"})
+        r = conn.getresponse(); r.read()
+        check(r.status == 403, "posts without the page's token are refused")
+        conn.request("POST", "/api/install", body=json.dumps({"version": "../x"}), headers={"Content-Type": "application/json", "X-Updater-Token": updater.Handler.token})
+        r = conn.getresponse(); r.read()
+        check(r.status == 400, "install refuses a bad version name")
+        conn.request("GET", "/nope")
+        r = conn.getresponse(); r.read()
+        check(r.status == 404, "unknown paths are 404")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 if __name__ == "__main__":
     try:
         test_mapper()
         test_types_rag_and_config()
         test_agents()
         test_pipeline_and_routes()
+        test_updater()
         print("\nAll checks passed.")
     finally:
         shutil.rmtree(TMP, ignore_errors=True)

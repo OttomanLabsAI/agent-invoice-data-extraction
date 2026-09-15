@@ -10,12 +10,16 @@ Runs locally on one machine at `http://localhost:8765`. Nothing is hosted; keys 
 
 ## Run it
 
+The easy way is the **updater**: download `invoice-agent-updater.zip` from the website, unzip it, keep the *Invoice agent* folder on the desktop and double-click `update.bat` (Windows) or `update.command` (Mac). A page opens in the browser showing the installed and latest versions; *Install the latest version* fetches the app into an `app` folder next to it, *Update* replaces it later (the `data` folder with the settings, the Gmail token and the invoices is carried over, the old version and the zip are deleted), *Older versions* installs any published version, and *Start the app* runs `run.bat` / `run.sh` for you. It needs Python 3 and nothing else; the files are in `updater/`.
+
+By hand:
+
 ```bash
 ./run.sh          # macOS / Linux (creates .venv, installs, starts)
 run.bat           # Windows
 ```
 
-or by hand: `pip install -r requirements.txt` then `python app.py`. Python 3.11 or newer.
+or `pip install -r requirements.txt` then `python app.py`. Python 3.11 or newer. The installed version is in the `VERSION` file.
 
 ## The tabs
 
@@ -111,7 +115,9 @@ agent/pipeline.py      classification run, extraction run, manual upload, backgr
 agent/store.py         SQLite (data/invoices.db): invoices, runs, classification decisions
 templates/, static/    the six tabs
 samples/               a fictional subcontractor invoice to test with
-tests/smoke_test.py    end-to-end test with Gmail and both Claude calls faked
+tests/smoke_test.py    end-to-end test with Gmail and both Claude calls faked, plus the updater with GitHub faked
+updater/               the desktop updater: updater.py (local page + install + start), updater.html, update.bat, update.command, README.txt, make_zip.py
+VERSION                the release number the updater compares with the one on GitHub
 public/                the project website, served by Cloudflare Workers (see Website below)
 wrangler.jsonc         Cloudflare config for it; package.json carries wrangler
 ```
@@ -122,7 +128,7 @@ Set `INVOICE_AGENT_DATA=/path` to keep `data/` somewhere else (a synced folder, 
 
 `public/` is a small static site - the front door for the accounts team: what the agent does in four steps, the agent tree with a note on each agent, downloads, screenshots of the pages, how to get it running and how to set it up. Cloudflare Workers serves it as static assets (no build step; nothing outside `public/` is deployed), and every push to `main` deploys it. The app itself is not hosted - it stays on the accounts machine as described above, and the site holds no data.
 
-The **Download** section offers the latest build as a zip of the `main` branch straight from GitHub, and an **Older versions** chooser. The chooser asks the GitHub API for the repository's releases (falling back to plain tags), lists them newest first, and points its button at the chosen tag's zip. With no releases published yet it says so; if GitHub cannot be reached it points at the releases page instead. Releases are created by hand from the release text in each push, so the chooser fills itself in as they are made.
+The **Download** section offers the updater zip (built from `updater/` by `python updater/make_zip.py` into `public/downloads/`), the latest build as a zip of the `main` branch straight from GitHub, and an **Older versions** chooser. The chooser asks the GitHub API for the repository's releases (falling back to plain tags), lists them newest first, and points its button at the chosen tag's zip. With no releases published yet it says so; if GitHub cannot be reached it points at the releases page instead. Releases are created by hand from the release text in each push, so the chooser fills itself in as they are made.
 
 ```bash
 npm install

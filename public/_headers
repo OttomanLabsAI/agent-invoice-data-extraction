@@ -15,3 +15,7 @@
 
 /
   Cache-Control: public, max-age=0, must-revalidate
+
+# Downloads must revalidate so a rebuilt updater zip is picked up straight away.
+/downloads/*
+  Cache-Control: public, max-age=0, must-revalidate
